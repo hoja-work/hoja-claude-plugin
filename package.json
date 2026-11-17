@@ -1,0 +1,24 @@
+{
+  "name": "@hoja/hoja-claude-plugin",
+  "version": "0.3.0",
+  "type": "module",
+  "description": "Claude Code plugin: Trebol's TaskManage, its Swarm task-enforcement hooks and Hoja mode, ported 1:1.",
+  "scripts": {
+    "vendor": "node scripts/vendor.mjs",
+    "vendor:check": "node scripts/vendor.mjs --check",
+    "build": "node scripts/build.mjs",
+    "test": "vitest run",
+    "validate": "claude plugin validate .",
+    "eval": "claude plugin eval . --mocks off --allow-tools Write \"mcp__plugin_hoja_hoja__*\""
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "vitest": "^5.1.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hoja-work/hoja-claude-plugin.git"
+  },
+  "private": true
+}
