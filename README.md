@@ -70,7 +70,8 @@ Run `/hoja:setup` at any time to check your configuration.
 
 ## Configuration
 
-Set values when Claude Code prompts on install (plugin `userConfig`), or through environment variables. Every value is optional: without credentials, TaskManage and the gate still work and
+Set values when Claude Code prompts on install (plugin `userConfig`), later with `/plugin configure hoja@hoja`, or
+through environment variables. Every value is optional: without credentials, TaskManage and the gate still work and
 publication is simply skipped.
 
 | Setting (`userConfig`) | Environment fallback | Purpose |
