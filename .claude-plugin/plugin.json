@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "hoja",
+  "displayName": "Hoja",
+  "version": "0.3.0",
+  "description": "Trebol's TaskManage (acceptance questions + evidence-validated completion), its Swarm task-enforcement hooks and Hoja mode (automatic TaskManage → Hoja issue publication), plus the hosted Hoja API tools — ported 1:1 from cloverinternational/trebol.",
+  "author": {
+    "name": "Hoja",
+    "url": "https://github.com/hoja-work"
+  },
+  "repository": "https://github.com/hoja-work/hoja-claude-plugin",
+  "license": "MIT",
+  "keywords": [
+    "hoja",
+    "tasks",
+    "taskmanage",
+    "hooks",
+    "project-management",
+    "trebol"
+  ],
+  "mcpServers": {
+    "hoja": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/dist/server.mjs"
+      ],
+      "alwaysLoad": true,
+      "env": {
+        "HOJA_PLUGIN_API_URL": "${user_config.hoja_api_url}",
+        "HOJA_PLUGIN_TOKEN": "${user_config.hoja_token}",
+        "HOJA_PLUGIN_PROJECT": "${user_config.hoja_project}",
+        "HOJA_PLUGIN_ENFORCEMENT": "${user_config.task_enforcement}"
+      }
+    },
+    "hoja-api": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/dist/api-proxy.mjs"
+      ],
+      "env": {
+        "HOJA_PLUGIN_API_URL": "${user_config.hoja_api_url}",
+        "HOJA_PLUGIN_TOKEN": "${user_config.hoja_token}",
+        "HOJA_PLUGIN_PROJECT": "${user_config.hoja_project}",
+        "HOJA_PLUGIN_MCP_URL": "${user_config.hoja_mcp_url}"
+      }
+    }
+  },
+  "userConfig": {
+    "hoja_api_url": {
+      "type": "string",
+      "title": "Hoja GraphQL URL",
+      "description": "Hoja (Linear-compatible) GraphQL endpoint, e.g. https://hoja.example.com/graphql. Leave empty to use HOJA_API_URL / LINEAR_API_URL / HOJA_MCP_URL from the environment."
+    },
+    "hoja_mcp_url": {
+      "type": "string",
+      "title": "Hoja MCP URL",
+      "description": "Hosted Hoja MCP endpoint for the full Hoja API tools (issues, comments, decisions…), e.g. https://hoja.example.com/mcp. Leave empty to use HOJA_MCP_URL, or derive it from the GraphQL endpoint's host."
+    },
+    "hoja_token": {
+      "type": "string",
+      "title": "Hoja API token",
+      "description": "Personal API token. Leave empty to use HOJA_TOKEN / LINEAR_TOKEN from the environment.",
+      "sensitive": true
+    },
+    "hoja_project": {
+      "type": "string",
+      "title": "Default Hoja project",
+      "description": "Project used when neither the chat (hoja_project select) nor the repository's .pi/config/hoja.json names one."
+    },
+    "task_enforcement": {
+      "type": "string",
+      "title": "Task enforcement",
+      "description": "block (Trebol default): non-read-only tools are refused until a TaskManage task is in_progress and active. advise: nudge only. off: no gate.",
+      "options": [
+        "block",
+        "advise",
+        "off"
+      ],
+      "default": "block"
+    }
+  },
+  "homepage": "https://github.com/hoja-work/hoja-claude-plugin"
+}
