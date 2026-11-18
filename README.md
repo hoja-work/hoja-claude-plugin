@@ -9,7 +9,7 @@ Trebol's TaskManage, its task-enforcement gate and Hoja issue sync — as a Clau
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-2F855A.svg)](LICENSE)
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757.svg)](https://code.claude.com/docs/en/plugins)
-[![Tests](https://img.shields.io/badge/tests-344%20passing-2F855A.svg)](#verify-it-yourself)
+[![Tests](https://img.shields.io/badge/tests-355%20passing-2F855A.svg)](#verify-it-yourself)
 [![Codex version](https://img.shields.io/badge/also%20for-Codex-111111.svg)](https://github.com/hoja-work/hoja-codex-plugin)
 
 </div>
@@ -65,8 +65,8 @@ Run `/hoja:setup` at any time to check your configuration.
 | **Task gate** | Trebol's Swarm hook pipeline: blocks non-read-only tools without a focused task (`block`), or only nudges (`advise`). Also: the completion nudge, the task-maintenance nudge, the bare-`sleep` blocker and the stdin-conflict guard. |
 | **Auto-continue** | When a gate block ends the turn, Claude is sent back with exactly what to do, within the same bounded budget Trebol uses. |
 | **Hoja mode** | `hoja_list`, `hoja_get` and `hoja_project`, plus automatic publication: one Hoja issue per coarse task, acceptance questions in the description, an evidence comment and Done on completion. |
-| **Hosted Hoja API** | The workspace's full MCP API (70+ tools: issues, comments, decisions, projects, cycles) as a second server, `hoja-api`. It is gated and evidence-checked under the same names Trebol uses. |
-| **Commands** | `/hoja:tasks` (task board), `/hoja:hoja on\|off\|status` (Hoja mode for this chat), `/hoja:setup` (diagnostics). All are answered locally, with no model turn. |
+| **Hosted Hoja API** | The workspace's full MCP API (70+ tools: issues, comments, decisions, projects, cycles) as a second server, `hoja-api`. Its **read** tools are exempt from the gate (see [Deviations from Trebol](#deviations-from-trebol)); its writes are gated and evidence-checked under the same names Trebol uses. |
+| **Commands** | `/hoja:tasks` (task board), `/hoja:hoja on\|off\|status` (Hoja mode for this chat), `/hoja:setup` (diagnostics). All are answered locally, with no model turn — and `hoja_setup`, the same read-only report as a tool, is the fallback if a hook cannot run. |
 
 ## Configuration
 
@@ -160,8 +160,19 @@ sequenceDiagram
 | `/tasks`, `/hoja` | `/hoja:tasks`, `/hoja:hoja`, answered by `UserPromptExpansion` |
 | Session entries | `${CLAUDE_PLUGIN_DATA}/sessions/<id>.jsonl` plus the Claude transcript |
 
-There is one intentional difference. `ToolSearch`, the Claude Code tool that loads deferred tool schemas, is never
-gated. Pi has no such tool, and gating it could make TaskManage unreachable.
+### Deviations from Trebol
+
+The vendored code decides everything; the adapter only widens or re-routes four things Claude Code does differently.
+Each one is covered by a test in `test/reported-bugs.test.ts`.
+
+| Area | Trebol | Here | Why |
+| --- | --- | --- | --- |
+| Schema loading | — | `ToolSearch` is never gated | Claude Code defers MCP tools behind `ToolSearch`; gating it could make the gate's only exit (TaskManage) unreachable. |
+| Read-only discovery | its own read tools (`hoja_list`, `hoja_get`, context, history, vault list/get) | also the hosted Hoja API's read tools (`hoja_viewer`, `hoja_workspace`, `hoja_teams`, `hoja_issues`, `hoja_projects`, `hoja_cycles`, `hoja_workflowStates`, `hoja_*Decisions`, inbox, labels, `hoja_extensionActions`, …), `hoja_project action:list` and `hoja_setup` | Trebol never sees the hosted API, so the gate refused a health check until an issue was filed. Writes (`hoja_issueCreate`, `hoja_taskUpdate`, `hoja_commentCreate`, `hoja_extensionActionRun`, `hoja_notificationMarkRead`, every `*Answer`/`*Update`/`*Delete`) stay gated. |
+| Read-only Bash | `isBashReadOnly` over its tokenizer | the same call after dropping pure file-descriptor redirections (`2>&1`, `>&2`, `>/dev/null`, `&>/dev/null`) | Trebol's tokenizer reads the `&` in `2>&1` as a command separator, so `cat file 2>&1` looked like two commands. Redirects to real files are untouched, and Trebol's allowlist stays conservative (`|| true` is still not read-only). |
+| Slash commands | `/tasks`, `/hoja` are Pi commands | `UserPromptExpansion` (any spelling of the command name) **and** a `UserPromptSubmit` fallback, plus the `hoja_setup` tool for the `.md` fallback | Claude Code fails a hook open when its plugin server is not connected; the command text then reached the model. Three independent paths now answer it. |
+| Published issue content | `createIssue(title, description)` — no priority | the task's description is put at the head of the issue body when the create operation omitted it, and its priority is written with one `issueUpdate` after the create | `IssueCreateInput.priority` was never populated, so every issue kept Hoja's default. Only the create path is touched: Trebol's later description writes are proved by exact read-back, so a description added to a task *after* its issue exists still stays local (upstream behaviour). |
+
 
 ## Verify it yourself
 
@@ -169,7 +180,7 @@ gated. Pi has no such tool, and gating it could make TaskManage unreachable.
 git clone https://github.com/hoja-work/hoja-claude-plugin && cd hoja-claude-plugin
 npm ci
 npm run vendor:check   # 53 vendored files match vendor/MANIFEST.json (SHA-256)
-npm test               # Trebol's own 25 suites, unmodified, plus the adapter tests: 344 tests
+npm test               # Trebol's own 25 suites, unmodified, plus the adapter tests: 355 tests
 npm run validate       # claude plugin validate .
 npm run eval           # live: the gate blocks an untasked write, the agent recovers, and plain questions create no tasks
 ```
@@ -180,7 +191,8 @@ To run the working tree directly: `claude --plugin-dir .`.
 
 | Symptom | Fix |
 | --- | --- |
-| `/hoja:setup` prints this README's fallback text | The hook did not run. Start with `claude --debug=hooks,mcp` and check that `plugin:hoja:hoja` is connected. |
+| `/hoja:setup` prints the command's fallback text | The hook could not run. The fallback now calls the read-only `hoja_setup` tool, so the report still prints when only the hook failed; if the tool is missing too, the server is down: `claude --debug=hooks,mcp` shows `MCP server "plugin:hoja:hoja"` and `Hook UserPromptExpansion`. |
+| A read-only tool was refused by the gate | Read tools of the hosted API and `hoja_project action:list` are exempt. A tool that is not on that list (or a shell command Trebol's allowlist does not know) is gated by design — set `task_enforcement` to `advise`, or use plain `ls`/`cat`/`grep`/`git log` forms. |
 | `hoja-api` serves no tools | No endpoint or token is configured. The tool list says which variable is missing. |
 | Every write is blocked | That is the gate working. Ask Claude to create and focus a task, or set `task_enforcement` to `advise`. |
 | Tasks are not published | Run `/hoja:hoja status` and `/hoja:setup`. Publication needs a token and a resolvable project. |

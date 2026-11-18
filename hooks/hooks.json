@@ -56,7 +56,7 @@
     ],
     "UserPromptExpansion": [
       {
-        "matcher": "hoja:tasks|hoja:hoja|hoja:setup",
+        "matcher": "hoja:.*|hoja:tasks|hoja:hoja|hoja:setup|tasks|setup|hoja",
         "hooks": [
           {
             "type": "mcp_tool",
