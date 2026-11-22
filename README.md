@@ -70,9 +70,20 @@ Run `/hoja:setup` at any time to check your configuration.
 
 ## Configuration
 
-Set values when Claude Code prompts on install (plugin `userConfig`), later with `/plugin configure hoja@hoja`, or
-through environment variables. Every value is optional: without credentials, TaskManage and the gate still work and
-publication is simply skipped.
+The simplest setup is to sign in once with the Hoja CLI:
+
+```bash
+hoja auth login acme.hoja.work
+```
+
+With no token configured, the plugin asks the CLI for a current token and the workspace's endpoints
+(`hoja auth token --json`), and asks again when the token expires or is rejected. Nothing to paste.
+
+For automation, or without the CLI, set values when Claude Code prompts on install (plugin `userConfig`), later with
+`/plugin configure hoja@hoja`, or through environment variables; a configured token always wins over the CLI
+sign-in. Every value is optional: without credentials, TaskManage and the gate still work and publication is simply
+skipped. An endpoint typed without a scheme gains `https://`; plain `http://` is accepted only for a loopback
+hoja-serve.
 
 | Setting (`userConfig`) | Environment fallback | Purpose |
 | --- | --- | --- |
@@ -82,7 +93,8 @@ publication is simply skipped.
 | `hoja_project` | `HOJA_PROJECT` | Default project for publication. Also `.pi/config/hoja.json` in the repo |
 | `task_enforcement` | `HOJA_TASK_ENFORCEMENT` | `block` (default) · `advise` · `off` |
 
-Like Trebol, there is **no default endpoint**: Hoja calls fail closed with a message naming the variable to set.
+Like Trebol, there is **no default endpoint**: without a CLI sign-in or a configured endpoint, Hoja calls fail closed
+with a message saying how to sign in.
 
 ## How it works
 
