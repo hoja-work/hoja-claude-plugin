@@ -9,6 +9,8 @@ import { appendFileSync } from "node:fs";
 import { hostOf } from "./host.ts";
 import { createInterface } from "node:readline";
 import { createRuntime } from "./runtime.ts";
+import { listen, socketPath } from "./agy-socket.ts";
+import { transcriptFromArtifacts } from "./agy.ts";
 import { PLUGIN_VERSION } from "./trace/collect.ts";
 import { applyCredentials, dataDir, enforcementMode, headless, traceDetail, traceUpload, truthy } from "./env.ts";
 
@@ -51,7 +53,16 @@ if (debugLog) log(`start host=${hostOf()} dataDir=${dataDir()} enforcement=${enf
 const { shim, bridge } = runtime;
 let calls = 0;
 
-async function callTool(name: string, args: Json, signal: AbortSignal): Promise<Json> {
+// Antigravity runs command hooks only; they reach this process through a socket named after our parent (agy).
+if (hostOf() === "antigravity") listen(socketPath(process.ppid), (message: Json) => bridge.handle(String(message?.event ?? ""), message?.payload ?? {}), log);
+
+async function callTool(name: string, args: Json, signal: AbortSignal, meta?: Json): Promise<Json> {
+	// Antigravity names the conversation on every tool call; bind it even if no hook has run yet.
+	const conversation = meta?.["antigravity.google/conversation_id"];
+	if (typeof conversation === "string" && conversation && conversation !== shim.sessionId) {
+		const artifacts = meta?.["antigravity.google/artifacts_dir"];
+		await shim.bindSession(conversation, typeof artifacts === "string" ? transcriptFromArtifacts(artifacts) : undefined);
+	}
 	if (name === HOOK_TOOL) {
 		const output = await bridge.handle(String(args.event ?? ""), args);
 		return { content: [{ type: "text", text: JSON.stringify(output) }] };
@@ -88,7 +99,7 @@ async function onMessage(message: Json) {
 		if (method === "tools/call") {
 			const controller = new AbortController();
 			inflight.set(id, controller);
-			try { return send({ jsonrpc: "2.0", id, result: await callTool(String(params?.name), params?.arguments ?? {}, controller.signal) }); }
+			try { return send({ jsonrpc: "2.0", id, result: await callTool(String(params?.name), params?.arguments ?? {}, controller.signal, params?._meta) }); }
 			finally { inflight.delete(id); }
 		}
 		if (method === "notifications/cancelled") { inflight.get(params?.requestId)?.abort(); return; }
