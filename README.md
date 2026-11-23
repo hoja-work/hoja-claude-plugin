@@ -24,8 +24,11 @@ Agents say "done" too easily. Hoja makes "done" mean something:
   `tool:Bash#3` — a real file or a real tool result from *this* session. Made-up evidence is rejected.
 - **Nothing mutates without a task.** A gate blocks writes, edits and shell commands until a task is focused.
   Reads are always free.
-- **Your tracker stays current by itself.** With Hoja mode on, each top-level task becomes a Hoja issue, its
-  progress is rewritten in place, and an evidenced completion moves it to Done.
+- **Your tracker stays current by itself.** With Hoja mode on, each top-level task becomes a Hoja issue and each
+  of its child tasks a sub-issue; progress is rewritten in place, and an evidenced completion moves it to Done.
+- **Nobody has to remind the agent.** Every message you write tells the agent how to register it (a new task, the
+  open one, or a child of the active one), and when a reply ends after real work with its task unreconciled or
+  untracked, the agent is sent back once to complete it with evidence or note what is left.
 - **Every session leaves a trace.** Turns, model calls with token usage, every tool call with its duration and
   outcome, gate blocks and subagents are recorded. When a task completes, the trace is attached to its issue, and
   Hoja opens it in a trace viewer.
@@ -69,7 +72,7 @@ Run `/hoja:setup` at any time to check your configuration.
 | **`TaskManage`** | Ordered, durable tasks with dependencies, sub-tasks, notes and 1–12 acceptance questions each. Completion is validated against the workspace and the session transcript. |
 | **Task gate** | Trebol's Swarm hook pipeline: blocks non-read-only tools without a focused task (`block`), or only nudges (`advise`). Also: the completion nudge, the task-maintenance nudge, the bare-`sleep` blocker and the stdin-conflict guard. |
 | **Auto-continue** | When a gate block ends the turn, Claude is sent back with exactly what to do, within the same bounded budget Trebol uses. |
-| **Hoja mode** | `hoja_list`, `hoja_get` and `hoja_project`, plus automatic publication: one Hoja issue per coarse task, acceptance questions in the description, an evidence comment and Done on completion. |
+| **Hoja mode** | `hoja_list`, `hoja_get` and `hoja_project`, plus automatic publication: one Hoja issue per top-level task and one sub-issue per child of it (`hoja:"local"` keeps a step out), acceptance questions in the description, an evidence comment and Done on completion. |
 | **Hosted Hoja API** | The workspace's full MCP API (70+ tools: issues, comments, decisions, projects, cycles) as a second server, `hoja-api`. Its **read** tools are exempt from the gate (see [Deviations from Trebol](#deviations-from-trebol)); its writes are gated and evidence-checked under the same names Trebol uses. |
 | **Session traces** | Every hook event is recorded; with the transcript and subagent transcripts it becomes a `hoja.trace/v1` JSON trace. Completing a task linked to an issue attaches the trace to that issue (see [Session traces](#session-traces)). |
 | **Commands** | `/hoja:tasks` (task board), `/hoja:hoja on\|off\|status` (Hoja mode for this chat), `/hoja:trace [upload [ISSUE]\|path]` (this session's trace), `/hoja:setup` (diagnostics). All are answered locally, with no model turn — and `hoja_setup` / `hoja_trace` are the tool fallbacks if a hook cannot run. |
@@ -156,9 +159,16 @@ needed, the plugin builds it from those records plus the session transcript and 
   Its format is internal to Claude Code, so it is read defensively. If it cannot be read, the trace is built from
   hooks alone and says so.
 
-A trace is uploaded with the same two calls the Hoja web app uses: `POST /api/uploads`, then `attachmentCreate`.
-That happens when a task linked to an issue completes, once per task and session, and the result is reported in the
-TaskManage result. A failed upload is reported there too and never fails the task. In Hoja, a
+A trace is sent to `POST /api/traces`, which stores it and attaches it to every issue the session touched (one
+attachment per issue and session, replaced in place). Older servers without that endpoint get the same two calls the
+Hoja web app uses: `POST /api/uploads`, then `attachmentCreate`. Uploads happen:
+
+- when a task linked to an issue completes (reported in the TaskManage result; a failure is reported there too, never
+  fails the task, and is retried on later TaskManage calls up to three times);
+- in the background while you work, once any issue is linked: at most every 30 seconds after a tool batch
+  (`HOJA_TRACE_SYNC_INTERVAL_MS`), and always when a reply ends. No hook waits for the upload. After a failed sync,
+  mid-reply syncs back off (30 s, doubling, up to 10 minutes);
+- at session end, per `trace_upload`. In Hoja, a
 `*.trace.json` attachment opens in the trace viewer: summary tiles, a collapsible waterfall, a per-tool breakdown and
 the task trail.
 
