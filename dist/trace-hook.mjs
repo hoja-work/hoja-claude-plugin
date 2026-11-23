@@ -1,7 +1,8 @@
 // Built by scripts/build.mjs from src/ and vendor/trebol/ (see vendor/MANIFEST.json). Do not edit.
 
 // src/trace-hook.ts
-import { readFileSync as readFileSync8 } from "node:fs";
+import { appendFileSync as appendFileSync3, readFileSync as readFileSync8 } from "node:fs";
+import { spawn } from "node:child_process";
 
 // src/env.ts
 import { homedir } from "node:os";
@@ -154,6 +155,7 @@ function dataDir(env = process.env, script = process.argv[1]) {
   if (installed) return join(installed[1], "plugins", "data", `${installed[3]}-${installed[2]}`);
   return join(env.CODEX_HOME?.trim() || join(homedir(), ".codex"), "plugins", "data", "hoja-standalone");
 }
+var truthy = (v) => /^(1|true|yes|on)$/i.test(v?.trim() ?? "");
 function traceUpload(env = process.env) {
   const v = (env.HOJA_PLUGIN_TRACE_UPLOAD || env.HOJA_TRACE_UPLOAD || "completion").trim().toLowerCase();
   return v === "session-end" || v === "manual" || v === "off" ? v : "completion";
@@ -6063,6 +6065,15 @@ function resultText(content, toolUseResult) {
   if (r && typeof r === "object") return [r.stdout, r.stderr].filter((s) => typeof s === "string" && s).join("\n");
   return "";
 }
+function codexToolName(item) {
+  if (item.type === "local_shell_call") return "Bash";
+  const name = String(item.name ?? "tool");
+  const ns = typeof item.namespace === "string" ? item.namespace : "";
+  if (!ns) return /^(exec_command|shell|container\.exec)$/.test(name) ? "Bash" : name === "apply_patch" ? "Edit" : name;
+  if (ns === "mcp__hoja") return name;
+  if (ns === "mcp__hoja_api" || ns === "mcp__hoja-api") return `hoja/${name}`;
+  return `${ns.replace(/^mcp__/, "")}/${name}`;
+}
 function displayToolName(raw) {
   const canonical = canonicalToolName(raw);
   const mcp = /^mcp__(?:plugin_([^_]+(?:_[^_]+)*?)_)?([^_].*?)__(.+)$/.exec(canonical);
@@ -6238,6 +6249,132 @@ var Builder = class {
     }
     if (main3) closeTurn(lastSeen);
   }
+  /**
+   * A Codex rollout (`~/.codex/sessions/…/rollout-*.jsonl`). Its shape, as Codex 0.169 writes it:
+   *   event_msg task_started / task_complete     one turn, with duration_ms
+   *   response_item reasoning|message|function_call   what the model produced
+   *   token_usage_record                          closes one model request: response_id + exact usage
+   *   response_item function_call_output          a tool result (call_id)
+   *   session_meta / turn_context                 cwd, cli_version, model
+   * Like the Claude transcript it is undocumented, so every field is optional and unknown lines are skipped.
+   */
+  walkCodex(entries, rootId) {
+    let turn;
+    let llm;
+    let model;
+    let lastInput;
+    let lastSeen;
+    let requests = 0;
+    const parent = () => turn?.id ?? rootId;
+    const openLlm = (ts) => {
+      if (llm) return llm;
+      llm = this.add({ id: `llm:codex-${++requests}`, parentId: parent(), kind: "llm", name: model ?? "model", start: lastInput ?? ts ?? lastSeen ?? (/* @__PURE__ */ new Date(0)).toISOString(), status: "ok", attrs: { model } });
+      if (model) this.models.add(model);
+      return llm;
+    };
+    const closeTurn = (end, durationMs) => {
+      if (!turn) return;
+      turn.end = end ?? lastSeen;
+      turn.durationMs = durationMs ?? between(turn.start, turn.end);
+      if (turn.status === "running") turn.status = "ok";
+      turn = void 0;
+    };
+    for (const entry of entries) {
+      const ts = typeof entry.timestamp === "string" ? entry.timestamp : void 0;
+      const p = entry.payload ?? {};
+      if (entry.type === "session_meta") {
+        if (typeof p.cwd === "string") this.cwd ??= p.cwd;
+        if (typeof p.cli_version === "string") this.hostVersion ??= p.cli_version;
+        if (typeof p.git?.branch === "string") this.gitBranch = p.git.branch;
+      } else if (entry.type === "turn_context") {
+        if (typeof p.model === "string") model = p.model;
+        if (typeof p.cwd === "string") this.cwd ??= p.cwd;
+        if (typeof p.approval_policy === "string") this.permissionMode = p.approval_policy;
+      } else if (entry.type === "compacted") {
+        if (ts) this.events.push({ at: ts, kind: "compaction", message: "Context compacted", spanId: turn?.id });
+      } else if (entry.type === "event_msg" && p.type === "task_started") {
+        closeTurn(lastSeen);
+        this.turnCount++;
+        turn = this.add({ id: `turn:${this.turnCount}`, parentId: rootId, kind: "turn", status: "running", name: `Turn ${this.turnCount}`, start: ts ?? lastSeen ?? (/* @__PURE__ */ new Date(0)).toISOString(), attrs: { index: this.turnCount, trigger: p.turn_attribution?.turn_trigger } });
+        lastInput = ts;
+      } else if (entry.type === "event_msg" && p.type === "task_complete") {
+        if (llm) {
+          llm.end ??= ts;
+          llm.durationMs ??= between(llm.start, llm.end);
+          llm = void 0;
+        }
+        closeTurn(ts, typeof p.duration_ms === "number" ? p.duration_ms : void 0);
+      } else if (entry.type === "event_msg" && (p.type === "turn_aborted" || p.type === "error") && ts) {
+        this.events.push({ at: ts, kind: "error", message: `Turn ${p.type === "turn_aborted" ? "aborted" : "failed"}${p.reason ? `: ${p.reason}` : p.message ? `: ${String(p.message).slice(0, 200)}` : ""}`, spanId: turn?.id });
+        if (turn) turn.status = "error";
+      } else if (entry.type === "token_usage_record") {
+        const span = openLlm(ts);
+        span.end = ts ?? span.end;
+        span.durationMs = between(span.start, span.end);
+        const u = p.usage ?? {};
+        const n = (v) => typeof v === "number" && Number.isFinite(v) ? v : 0;
+        span.attrs.usage = { input_tokens: Math.max(0, n(u.input_tokens) - n(u.cached_input_tokens)), output_tokens: n(u.output_tokens), cache_read_tokens: n(u.cached_input_tokens), cache_creation_tokens: n(u.cache_write_input_tokens) };
+        if (n(u.reasoning_output_tokens)) span.attrs.reasoningTokens = n(u.reasoning_output_tokens);
+        if (typeof p.response_id === "string") span.attrs.request_id = p.response_id;
+        llm = void 0;
+      } else if (entry.type === "response_item") {
+        if (p.type === "message" && p.role === "user") {
+          const text3 = (Array.isArray(p.content) ? p.content : []).filter((c) => typeof c?.text === "string").map((c) => c.text).join("\n");
+          if (text3 && !ROLLOUT_INJECTED.test(text3) && turn && !turn.attrs?.prompt) {
+            turn.name = this.full ? clip2(firstLine(this.redactor.scrub(text3)), 90, false) : turn.name;
+            if (this.full) turn.attrs = { ...turn.attrs, prompt: this.content(text3) };
+            this.firstPrompt ??= text3;
+          }
+          lastInput = ts;
+        } else if (p.type === "reasoning") {
+          openLlm(ts).attrs.thinking = true;
+        } else if (p.type === "message" && p.role === "assistant") {
+          const text3 = (Array.isArray(p.content) ? p.content : []).filter((c) => typeof c?.text === "string").map((c) => c.text).join("\n");
+          const span = openLlm(ts);
+          if (text3 && this.full) span.attrs.text = this.content(typeof span.attrs.text === "string" ? `${span.attrs.text}
+${text3}` : text3);
+        } else if ((p.type === "function_call" || p.type === "custom_tool_call" || p.type === "local_shell_call") && typeof p.call_id === "string") {
+          const span = openLlm(ts);
+          let args = p.arguments ?? p.input ?? p.action;
+          if (typeof args === "string") {
+            try {
+              args = JSON.parse(args);
+            } catch {
+            }
+          }
+          const tool = codexToolName(p);
+          const labelInput = tool === "Bash" && args && typeof args === "object" ? { command: args.cmd ?? args.command } : args;
+          const toolSpan = this.add({
+            id: `tool:${p.call_id}`,
+            parentId: parent(),
+            kind: "tool",
+            name: this.label(tool, labelInput),
+            start: ts ?? span.start,
+            status: "running",
+            attrs: { tool_name: tool, tool_use_id: p.call_id, llmId: span.id, ...this.full ? { input: this.content(typeof args === "object" ? JSON.stringify(args, null, 1) : String(args ?? "")) } : {} }
+          });
+          this.toolSpans.set(p.call_id, toolSpan);
+          this.taskEvents(tool, args, ts, toolSpan.id);
+        } else if ((p.type === "function_call_output" || p.type === "custom_tool_call_output") && typeof p.call_id === "string") {
+          const span = this.toolSpans.get(p.call_id);
+          const text3 = typeof p.output === "string" ? p.output : Array.isArray(p.output) ? p.output.map((c) => typeof c?.text === "string" ? c.text : "").filter(Boolean).join("\n") : typeof p.output?.content === "string" ? p.output.content : "";
+          if (span) {
+            span.end = ts ?? span.end;
+            span.durationMs = between(span.start, span.end);
+            const exit = /Process exited with code (\d+)/.exec(text3);
+            const rejected = span.attrs?.tool_name === "TaskManage" && /"status"\s*:\s*"(failed|partial)"/.test(text3);
+            span.status = /blocked by (?:PreToolUse )?hook|\[TASK ENFORCEMENT/i.test(text3) ? "blocked" : exit && exit[1] !== "0" || p.output?.success === false || rejected ? "error" : "ok";
+            const out = this.content(text3);
+            if (out) span.attrs = { ...span.attrs, [span.status === "ok" ? "output" : "error"]: out };
+            if (exit) span.attrs = { ...span.attrs, exitCode: Number(exit[1]) };
+          }
+          lastInput = ts;
+        }
+      }
+      if (ts) lastSeen = ts;
+    }
+    closeTurn(lastSeen);
+  }
   /** TaskManage creates/updates as instants on the timeline: what the agent committed to, and when. */
   taskEvents(tool, input2, at, spanId) {
     if (tool !== "TaskManage" || !at || !Array.isArray(input2?.operations)) return;
@@ -6338,8 +6475,12 @@ function buildTrace(input2) {
   const rootId = "session";
   const root = b.add({ id: rootId, kind: "session", name: "Session", start: "", status: "ok" });
   const entries = input2.transcript ? parseLines(input2.transcript) : [];
-  const basis = entries.some((e) => e.type === "assistant" || e.type === "user") ? "transcript" : "hooks";
-  if (basis === "transcript") b.walk(entries, rootId);
+  const codex = entries.some((e) => e.type === "session_meta" || e.type === "response_item" || e.type === "token_usage_record");
+  const basis = codex || entries.some((e) => e.type === "assistant" || e.type === "user") ? "transcript" : "hooks";
+  if (basis === "transcript") {
+    if (codex) b.walkCodex(entries, rootId);
+    else b.walk(entries, rootId);
+  }
   for (const sub of input2.subagents ?? []) {
     const subEntries = parseLines(sub.text);
     if (!subEntries.length) continue;
@@ -6410,7 +6551,7 @@ function buildTrace(input2) {
     schema: TRACE_SCHEMA,
     id: `${input2.sessionId}@${root.end}`,
     createdAt: now,
-    source: { host: input2.host ?? "claude-code", hostVersion: b.hostVersion, plugin: input2.plugin, detail: input2.detail ?? "full" },
+    source: { host: input2.host ?? (codex ? "codex" : "claude-code"), hostVersion: b.hostVersion, plugin: input2.plugin, detail: input2.detail ?? "full" },
     session: {
       id: input2.sessionId,
       title: (input2.detail ?? "full") === "full" ? title : void 0,
@@ -6472,7 +6613,7 @@ function fitTrace(trace, limit = 8 * 1024 * 1024) {
 }
 
 // src/trace/collect.ts
-var PLUGIN_VERSION = "0.4.0";
+var PLUGIN_VERSION = "0.4.1";
 var HOJA_TASK_ENTRY2 = "hoja-task-link";
 var TASK_STATE_ENTRY = "pi-swarm-task-state";
 function hojaLinks(entries) {
@@ -6556,7 +6697,7 @@ function collectTrace(options) {
     hooks,
     tasks: traceTasks(options.tasks ?? journalTasks(journal), links),
     plugin: `hoja@${PLUGIN_VERSION}`,
-    host: options.host,
+    host: options.host ?? (hostOf() === "codex" ? "codex" : void 0),
     detail: options.detail,
     redactor: new Redactor(options.env ?? process.env),
     now: options.now,
@@ -6632,14 +6773,16 @@ function renderSummary(trace, extra = {}) {
 // src/trace/upload.ts
 import { existsSync as existsSync5, readFileSync as readFileSync7, writeFileSync as writeFileSync3, mkdirSync as mkdirSync5 } from "node:fs";
 import { join as join6 } from "node:path";
+var HOSTS = { "claude-code": { slug: "claude-code", name: "Claude Code" }, codex: { slug: "codex", name: "Codex" } };
+var hostOf2 = (trace) => HOSTS[trace.source.host] ?? { slug: trace.source.host.replace(/[^a-z0-9-]/gi, "-").toLowerCase() || "agent", name: trace.source.host };
 function traceFileName(trace) {
   const stamp = trace.session.end.replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z").replace("T", "-");
-  return `claude-code-${trace.session.id.slice(0, 8)}-${stamp}.trace.json`;
+  return `${hostOf2(trace).slug}-${trace.session.id.slice(0, 8)}-${stamp}.trace.json`;
 }
 function traceSubtitle(trace) {
   const t = trace.totals;
   return [
-    "Claude Code trace",
+    `${hostOf2(trace).name} trace`,
     formatDuration(trace.session.durationMs),
     `${t.turns} turn${t.turns === 1 ? "" : "s"}`,
     `${t.toolCalls} tool call${t.toolCalls === 1 ? "" : "s"}`,
@@ -6650,7 +6793,8 @@ function traceSubtitle(trace) {
   ].filter(Boolean).join(" \xB7 ");
 }
 function traceTitle(trace, reason) {
-  return traceFileName(trace).replace(/^claude-code-/, `claude-code${reason ? `-${reason}` : ""}-`);
+  const slug = hostOf2(trace).slug;
+  return traceFileName(trace).replace(`${slug}-`, `${slug}${reason ? `-${reason}` : ""}-`);
 }
 var ATTACH = `mutation HojaTraceAttach($input: AttachmentCreateInput!) { attachmentCreate(input: $input) { success attachment { id url } } }`;
 async function uploadTrace(trace, issue, target2, reason) {
@@ -6915,11 +7059,17 @@ function taskBoard(manager, width = 100) {
 }
 
 // src/trace-hook.ts
+function recordSessionEnd(input2, env = process.env) {
+  if (input2.session_id) new TraceRecorder({ dataDir: dataDir(env), detail: traceDetail(env) }).record(input2.session_id, "SessionEnd", input2);
+}
 async function sessionEnd(input2, env = process.env) {
+  recordSessionEnd(input2, env);
+  return finishSession(input2, env);
+}
+async function finishSession(input2, env = process.env) {
   const sessionId = input2.session_id;
   if (!sessionId) return [];
   const dir = dataDir(env);
-  new TraceRecorder({ dataDir: dir, detail: traceDetail(env) }).record(sessionId, "SessionEnd", input2);
   const mode = traceUpload(env);
   const { shim, traces } = createRuntime({ dataDir: dir, cwd: input2.cwd || process.cwd(), hoja: false, trace: { upload: mode, detail: traceDetail(env), env } });
   await shim.bindSession(sessionId, input2.transcript_path, input2.cwd);
@@ -6942,15 +7092,40 @@ async function sessionEnd(input2, env = process.env) {
   }
   return out;
 }
+var debug = (lines) => {
+  const log = process.env.HOJA_DEBUG_LOG?.trim();
+  if (log && lines.length) try {
+    appendFileSync3(log, lines.map((l) => `${(/* @__PURE__ */ new Date()).toISOString()} [session-end] ${l}
+`).join(""));
+  } catch {
+  }
+};
 async function main2() {
-  applyCredentials();
+  if (process.argv[2] === "--finish") {
+    applyCredentials();
+    let input3 = {};
+    try {
+      input3 = JSON.parse(process.argv[3] ?? "{}");
+    } catch {
+    }
+    debug(await finishSession(input3));
+    return;
+  }
+  applyUserConfig();
   let input2 = {};
   try {
     input2 = JSON.parse(readFileSync8(0, "utf8") || "{}");
   } catch {
   }
-  const lines = await sessionEnd(input2);
-  if (process.env.HOJA_DEBUG_LOG) process.stderr.write(lines.join("\n") + "\n");
+  const { session_id, transcript_path, cwd, reason } = input2;
+  recordSessionEnd(input2);
+  if (!session_id) return;
+  if (truthy(process.env.HOJA_TRACE_SYNC)) {
+    applyCredentials();
+    debug(await finishSession(input2));
+    return;
+  }
+  spawn(process.execPath, [process.argv[1], "--finish", JSON.stringify({ session_id, transcript_path, cwd, reason })], { detached: true, stdio: "ignore", env: process.env }).unref();
 }
 if (process.argv[1] && /trace-hook\.(m?js|ts)$/.test(process.argv[1])) main2().catch((error) => {
   process.stderr.write(`[hoja] trace: ${error?.message ?? error}
@@ -6958,5 +7133,7 @@ if (process.argv[1] && /trace-hook\.(m?js|ts)$/.test(process.argv[1])) main2().c
   process.exit(0);
 });
 export {
+  finishSession,
+  recordSessionEnd,
   sessionEnd
 };

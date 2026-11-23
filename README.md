@@ -245,7 +245,7 @@ Each one is covered by a test in `test/reported-bugs.test.ts`.
 git clone https://github.com/hoja-work/hoja-claude-plugin && cd hoja-claude-plugin
 npm ci
 npm run vendor:check   # 53 vendored files match vendor/MANIFEST.json (SHA-256)
-npm test               # Trebol's own 25 suites, unmodified, plus the adapter and trace tests: 376 tests
+npm test               # Trebol's own 25 suites, unmodified, plus the adapter and trace tests: 387 tests
 npm run validate       # claude plugin validate . (also passes with --strict)
 npm run eval           # live: the gate blocks an untasked write, the agent recovers, and plain questions create no tasks
 ```

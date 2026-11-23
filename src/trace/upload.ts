@@ -16,16 +16,19 @@ export type FetchLike = (url: string, init: { method: string; headers: Record<st
 export interface UploadTarget { graphqlUrl: string; token: string; fetchImpl?: FetchLike; timeoutMs?: number }
 export interface UploadResult { issue: string; url: string; attachmentId?: string; title: string; subtitle: string; bytes: number }
 
+const HOSTS: Record<string, { slug: string; name: string }> = { "claude-code": { slug: "claude-code", name: "Claude Code" }, codex: { slug: "codex", name: "Codex" } };
+const hostOf = (trace: HojaTrace) => HOSTS[trace.source.host] ?? { slug: trace.source.host.replace(/[^a-z0-9-]/gi, "-").toLowerCase() || "agent", name: trace.source.host };
+
 export function traceFileName(trace: HojaTrace): string {
 	const stamp = trace.session.end.replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z").replace("T", "-");
-	return `claude-code-${trace.session.id.slice(0, 8)}-${stamp}.trace.json`;
+	return `${hostOf(trace).slug}-${trace.session.id.slice(0, 8)}-${stamp}.trace.json`;
 }
 
 /** One line a person reads in the attachment list. */
 export function traceSubtitle(trace: HojaTrace): string {
 	const t = trace.totals;
 	return [
-		"Claude Code trace",
+		`${hostOf(trace).name} trace`,
 		formatDuration(trace.session.durationMs),
 		`${t.turns} turn${t.turns === 1 ? "" : "s"}`,
 		`${t.toolCalls} tool call${t.toolCalls === 1 ? "" : "s"}`,
@@ -37,7 +40,8 @@ export function traceSubtitle(trace: HojaTrace): string {
 }
 
 export function traceTitle(trace: HojaTrace, reason?: string): string {
-	return traceFileName(trace).replace(/^claude-code-/, `claude-code${reason ? `-${reason}` : ""}-`);
+	const slug = hostOf(trace).slug;
+	return traceFileName(trace).replace(`${slug}-`, `${slug}${reason ? `-${reason}` : ""}-`);
 }
 
 const ATTACH = `mutation HojaTraceAttach($input: AttachmentCreateInput!) { attachmentCreate(input: $input) { success attachment { id url } } }`;

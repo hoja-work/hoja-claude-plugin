@@ -144,6 +144,28 @@ describe("trace builder", () => {
 		expect(trace.spans.find(s => s.id === "tool:tu_bash")!.name).toBe("Bash");
 		expect(totalTokens(trace.totals.tokens)).toBeGreaterThan(0);
 	});
+	it("reads a real Codex rollout: turns, per-request tokens, tool calls, the gate's block, rejected TaskManage calls", () => {
+		const transcript = readFileSync(join(__dirname, "fixtures", "codex-rollout.jsonl"), "utf8");
+		const trace = buildTrace({ sessionId: "01a1ebd9", transcript, hooks: [], plugin: "p", redactor: new Redactor({}) });
+		expect(trace.source).toMatchObject({ host: "codex", hostVersion: "0.169.0" });
+		expect(trace.session).toMatchObject({ basis: "transcript", models: ["wafer-glm-5.2"], durationMs: 12009 });
+		const turn = trace.spans.find(s => s.kind === "turn")!;
+		expect(turn).toMatchObject({ durationMs: 12018, status: "ok" });
+		expect(turn.name).toMatch(/^Run: touch proof.txt/);
+		const llm = trace.spans.filter(s => s.kind === "llm");
+		expect(llm).toHaveLength(8);
+		// OpenAI's input_tokens includes the cached ones; the trace keeps them apart, like Claude Code's names.
+		expect(llm[1].attrs!.usage).toEqual({ input_tokens: 26351, output_tokens: 149, cache_read_tokens: 5248, cache_creation_tokens: 0 });
+		expect(llm[0].attrs!.request_id).toMatch(/^chatcmpl-/);
+		expect(trace.totals.tokens.output_tokens).toBe(695);
+		const tools = trace.spans.filter(s => s.kind === "tool");
+		expect(tools.map(t => t.status)).toEqual(["blocked", "ok", "ok", "ok", "error", "error", "ok"]);
+		expect(tools[0].name).toBe("Bash · touch proof.txt");
+		expect(tools[1].name).toBe("TaskManage · create touch proof.txt");
+		expect(tools[2].attrs!.exitCode).toBe(0);
+		expect(trace.totals).toMatchObject({ turns: 1, llmCalls: 8, toolCalls: 7, blocked: 1, toolErrors: 2 });
+		expect(traceSubtitle(trace)).toMatch(/^Codex trace · 12s · 1 turn · 7 tool calls/);
+	});
 	it("falls back to hooks alone when there is no transcript", () => {
 		const trace = buildTrace({
 			sessionId: "s-2", plugin: "hoja@test", redactor: new Redactor({}), hooks: [
