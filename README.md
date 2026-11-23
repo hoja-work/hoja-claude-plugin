@@ -11,6 +11,7 @@ Trebol's TaskManage, its task-enforcement gate, Hoja issue sync and session trac
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757.svg)](https://code.claude.com/docs/en/plugins)
 [![Tests](https://img.shields.io/badge/tests-376%20passing-2F855A.svg)](#verify-it-yourself)
 [![Codex version](https://img.shields.io/badge/also%20for-Codex-111111.svg)](https://github.com/hoja-work/hoja-codex-plugin)
+[![Antigravity version](https://img.shields.io/badge/also%20for-Antigravity-4285F4.svg)](https://github.com/hoja-work/hoja-antigravity-plugin)
 
 </div>
 
@@ -279,8 +280,9 @@ test/           adapter tests (Claude and Codex hosts)
 
 To re-vendor from a Trebol checkout, run `TREBOL_ROOT=~/src/trebol npm run vendor && npm run build && npm test`.
 
-The [Codex plugin](https://github.com/hoja-work/hoja-codex-plugin) has the same adapter source, selected with
-`HOJA_PLUGIN_HOST=codex`.
+The [Codex plugin](https://github.com/hoja-work/hoja-codex-plugin) and the
+[Antigravity plugin](https://github.com/hoja-work/hoja-antigravity-plugin) have the same adapter source, selected with
+`HOJA_PLUGIN_HOST=codex` or `HOJA_PLUGIN_HOST=antigravity`.
 
 ## License
 
