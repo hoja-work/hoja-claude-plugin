@@ -4,12 +4,12 @@
 
 # Hoja for Claude Code
 
-**Tasks that can't be marked done without proof.**
-Trebol's TaskManage, its task-enforcement gate and Hoja issue sync — as a Claude Code plugin.
+**Tasks that can't be marked done without proof — and a trace of how the work was done.**
+Trebol's TaskManage, its task-enforcement gate, Hoja issue sync and session traces — as a Claude Code plugin.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-2F855A.svg)](LICENSE)
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757.svg)](https://code.claude.com/docs/en/plugins)
-[![Tests](https://img.shields.io/badge/tests-355%20passing-2F855A.svg)](#verify-it-yourself)
+[![Tests](https://img.shields.io/badge/tests-376%20passing-2F855A.svg)](#verify-it-yourself)
 [![Codex version](https://img.shields.io/badge/also%20for-Codex-111111.svg)](https://github.com/hoja-work/hoja-codex-plugin)
 
 </div>
@@ -25,6 +25,9 @@ Agents say "done" too easily. Hoja makes "done" mean something:
   Reads are always free.
 - **Your tracker stays current by itself.** With Hoja mode on, each top-level task becomes a Hoja issue, its
   progress is rewritten in place, and an evidenced completion moves it to Done.
+- **Every session leaves a trace.** Turns, model calls with token usage, every tool call with its duration and
+  outcome, gate blocks and subagents are recorded. When a task completes, the trace is attached to its issue, and
+  Hoja opens it in a trace viewer.
 
 This is not a re-implementation. The engine, the gate and Hoja mode are
 [Trebol](https://github.com/cloverinternational/trebol)'s own code, vendored byte-for-byte and hash-checked. The
@@ -53,6 +56,7 @@ work as usual. An abridged, illustrative session:
 
 ● hoja - TaskManage (completed · flag-works ← tool:Bash#4 · tests-pass ← tool:Bash#5)
   ⎿  succeeded · HOJA-712 → Done
+     Hoja trace: attached this session's trace to HOJA-712 (Claude Code trace · 3m 12s · 1 turn · 9 tool calls · 1 blocked · 412k tokens).
 ```
 
 Run `/hoja:setup` at any time to check your configuration.
@@ -66,7 +70,8 @@ Run `/hoja:setup` at any time to check your configuration.
 | **Auto-continue** | When a gate block ends the turn, Claude is sent back with exactly what to do, within the same bounded budget Trebol uses. |
 | **Hoja mode** | `hoja_list`, `hoja_get` and `hoja_project`, plus automatic publication: one Hoja issue per coarse task, acceptance questions in the description, an evidence comment and Done on completion. |
 | **Hosted Hoja API** | The workspace's full MCP API (70+ tools: issues, comments, decisions, projects, cycles) as a second server, `hoja-api`. Its **read** tools are exempt from the gate (see [Deviations from Trebol](#deviations-from-trebol)); its writes are gated and evidence-checked under the same names Trebol uses. |
-| **Commands** | `/hoja:tasks` (task board), `/hoja:hoja on\|off\|status` (Hoja mode for this chat), `/hoja:setup` (diagnostics). All are answered locally, with no model turn — and `hoja_setup`, the same read-only report as a tool, is the fallback if a hook cannot run. |
+| **Session traces** | Every hook event is recorded; with the transcript and subagent transcripts it becomes a `hoja.trace/v1` JSON trace. Completing a task linked to an issue attaches the trace to that issue (see [Session traces](#session-traces)). |
+| **Commands** | `/hoja:tasks` (task board), `/hoja:hoja on\|off\|status` (Hoja mode for this chat), `/hoja:trace [upload [ISSUE]\|path]` (this session's trace), `/hoja:setup` (diagnostics). All are answered locally, with no model turn — and `hoja_setup` / `hoja_trace` are the tool fallbacks if a hook cannot run. |
 
 ## Configuration
 
@@ -92,9 +97,56 @@ hoja-serve.
 | `hoja_token` *(marked sensitive)* | `HOJA_TOKEN` (deprecated alias: `LINEAR_TOKEN`) | Personal API token |
 | `hoja_project` | `HOJA_PROJECT` | Default project for publication. Also `.pi/config/hoja.json` in the repo |
 | `task_enforcement` | `HOJA_TASK_ENFORCEMENT` | `block` (default) · `advise` · `off` |
+| `trace_upload` | `HOJA_TRACE_UPLOAD` | `completion` (default): attach the trace when a linked task completes · `session-end`: also attach the final trace to every linked issue when the session ends · `manual`: only `/hoja:trace upload` · `off` |
+| `trace_detail` | `HOJA_TRACE_DETAIL` | `full` (default): whole prompts, tool inputs and outputs and model responses, secret-scrubbed · `metadata`: names, timings, statuses and token counts only |
 
 Like Trebol, there is **no default endpoint**: without a CLI sign-in or a configured endpoint, Hoja calls fail closed
 with a message saying how to sign in.
+
+## Session traces
+
+Every hook event is appended to `${CLAUDE_PLUGIN_DATA}/traces/<session>.events.jsonl` as it happens. When a trace is
+needed, the plugin builds it from those records plus the session transcript and its subagent transcripts:
+
+- **Hooks** are the documented, stable source. They give exact tool durations (`duration_ms`), the gate's decisions,
+  subagent start and stop, compactions, notifications and failures.
+- **The transcript** adds model requests (model, token usage, stop reason, thinking time) and the turn structure.
+  Its format is internal to Claude Code, so it is read defensively. If it cannot be read, the trace is built from
+  hooks alone and says so.
+
+A trace is uploaded with the same two calls the Hoja web app uses: `POST /api/uploads`, then `attachmentCreate`.
+That happens when a task linked to an issue completes, once per task and session, and the result is reported in the
+TaskManage result. A failed upload is reported there too and never fails the task. In Hoja, a
+`*.trace.json` attachment opens in the trace viewer: summary tiles, a collapsible waterfall, a per-tool breakdown and
+the task trail.
+
+| Command / tool | What it does |
+| --- | --- |
+| `/hoja:trace` · `hoja_trace` | Summary of this session: time, turns, model calls, tool table, slowest and failed calls, files written, tokens. It also saves the JSON. This only reads, so the gate does not block it |
+| `/hoja:trace upload [ISSUE]` · `hoja_trace {action: "upload", issue}` | Attach the trace now, to the named issue or to every issue this session's tasks are linked to. This is a write, so the gate applies |
+| `/hoja:trace path` | Where the JSON is saved locally |
+
+**What leaves your machine.** Traces go only to your own Hoja workspace, and only when a task is linked to an issue
+or you upload one explicitly. By default a trace carries **full content**: whole prompts, tool inputs, tool outputs
+and model responses. It is your data, and an error is usually at the end of an output, so nothing is cut to a preview.
+Only a single field longer than 256,000 characters is trimmed, and when a whole trace would pass the 8 MB upload
+budget (Hoja's limit is 10 MB), the largest fields shrink step by step. Trimming always keeps the head and the tail
+and states how much was left out; spans are dropped only as a last resort. A 1-hour session with 7 subagents and 709
+tool calls was 3.9 MB.
+
+Every field is scrubbed of known credential shapes (Anthropic, OpenAI, GitHub, Slack, AWS and Google keys, JWTs,
+private keys, `token=` / `Authorization:` values) and of the values of secret-looking environment variables. The
+first upload in a session and `/hoja:setup` both say that full content is included. Use `trace_detail: metadata` to
+send only names, timings, statuses and token counts, which matches Claude Code's own telemetry defaults. Use
+`trace_upload: manual` or `off` to keep traces local.
+
+**Format.** `hoja.trace/v1` is a flat list of spans (`session` → `turn` → `llm` / `tool` → `subagent` → …) linked
+by `parentId`, plus instant `events`. Names follow Claude Code's OpenTelemetry output where the meaning is the same:
+`turn` ≈ `claude_code.interaction`, `llm` ≈ `claude_code.llm_request`, `tool` ≈ `claude_code.tool`. The attributes
+`model`, `request_id`, `tool_name`, `tool_use_id`, `success`, `input_tokens`, `output_tokens`, `cache_read_tokens`
+and `cache_creation_tokens` use the same names too. The trace carries no cost figure. The only cost Claude Code
+publishes is a client-side estimate that hooks cannot read, and a price table in the plugin would go out of date.
+The schema is in [`src/trace/schema.ts`](src/trace/schema.ts).
 
 ## How it works
 
@@ -167,10 +219,11 @@ sequenceDiagram
 | `registerTool` (TaskManage, hoja_*) | MCP stdio server `dist/server.mjs`, with tools loaded upfront |
 | `tool_call` block / pre-context | `PreToolUse` deny / `additionalContext` |
 | `tool_result`, `turn_end` | `PostToolUse` (+`Failure`), `PostToolBatch` |
-| `before_agent_start` system prompt | `SessionStart` command hook |
+| `before_agent_start` system prompt | `SessionStart` command hook (also records the session start for tracing) |
 | `agent_before_settle` gate resume | `Stop` → `additionalContext` |
 | `/tasks`, `/hoja` | `/hoja:tasks`, `/hoja:hoja`, answered by `UserPromptExpansion` |
 | Session entries | `${CLAUDE_PLUGIN_DATA}/sessions/<id>.jsonl` plus the Claude transcript |
+| — (tracing is plugin-only) | `SubagentStart`/`SubagentStop`, `PreCompact`/`PostCompact`, `Notification`, `StopFailure`, `PermissionDenied` → recorder; `SessionEnd` → `dist/trace-hook.mjs` (a command hook, because the MCP server may already be gone) |
 
 ### Deviations from Trebol
 
@@ -192,8 +245,8 @@ Each one is covered by a test in `test/reported-bugs.test.ts`.
 git clone https://github.com/hoja-work/hoja-claude-plugin && cd hoja-claude-plugin
 npm ci
 npm run vendor:check   # 53 vendored files match vendor/MANIFEST.json (SHA-256)
-npm test               # Trebol's own 25 suites, unmodified, plus the adapter tests: 355 tests
-npm run validate       # claude plugin validate .
+npm test               # Trebol's own 25 suites, unmodified, plus the adapter and trace tests: 376 tests
+npm run validate       # claude plugin validate . (also passes with --strict)
 npm run eval           # live: the gate blocks an untasked write, the agent recovers, and plain questions create no tasks
 ```
 
@@ -208,11 +261,14 @@ To run the working tree directly: `claude --plugin-dir .`.
 | `hoja-api` serves no tools | No endpoint or token is configured. The tool list says which variable is missing. |
 | Every write is blocked | That is the gate working. Ask Claude to create and focus a task, or set `task_enforcement` to `advise`. |
 | Tasks are not published | Run `/hoja:hoja status` and `/hoja:setup`. Publication needs a token and a resolvable project. |
+| Every Hoja call fails with `Failed to parse URL` (0.3.1) | The endpoint setting was saved without `https://`. 0.4.0 repairs it; on 0.3.1, re-enter it with `/plugin configure hoja@hoja`. |
+| No trace was attached | Only tasks linked to an issue get one (a task with `{"hoja":"local"}` stays local), once per task. `/hoja:trace` shows the upload status; `/hoja:trace upload HOJA-123` attaches it by hand. |
 
 ## Development
 
 ```text
 src/            adapter: MCP server, hook bridge, Pi shim, transcript reader, API proxy
+src/trace/      session traces: recorder, builder, redaction, upload, /hoja:trace
 vendor/trebol/  Trebol files, byte-for-byte (never edit; re-vendor instead)
 dist/           bundled entry points (committed, because plugins run without a build step)
 hooks/          hooks.json — every event is forwarded to the server's __hoja_hook tool

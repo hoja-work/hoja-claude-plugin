@@ -1,5 +1,5 @@
 {
-  "description": "Trebol TaskManage + Swarm builtin hooks + Hoja mode. Every event is forwarded to the plugin's MCP server (one process per session), where the vendored Trebol code decides.",
+  "description": "Trebol TaskManage + Swarm builtin hooks + Hoja mode + session tracing. Every event is forwarded to the plugin's MCP server (one process per session), where the vendored Trebol code decides and the trace recorder writes one line per event. SessionStart and SessionEnd are command hooks: at launch no MCP client exists yet, and at SessionEnd the server may already be gone.",
   "hooks": {
     "SessionStart": [
       {
@@ -47,7 +47,9 @@
               "transcript_path": "${transcript_path}",
               "cwd": "${cwd}",
               "agent_id": "${agent_id}",
-              "prompt": "${prompt}"
+              "prompt": "${prompt}",
+              "agent_type": "${agent_type}",
+              "permission_mode": "${permission_mode}"
             },
             "timeout": 30
           }
@@ -56,7 +58,7 @@
     ],
     "UserPromptExpansion": [
       {
-        "matcher": "hoja:.*|hoja:tasks|hoja:hoja|hoja:setup|tasks|setup|hoja",
+        "matcher": "hoja:.*|tasks|setup|hoja|trace",
         "hooks": [
           {
             "type": "mcp_tool",
@@ -69,7 +71,9 @@
               "cwd": "${cwd}",
               "agent_id": "${agent_id}",
               "command_name": "${command_name}",
-              "command_args": "${command_args}"
+              "command_args": "${command_args}",
+              "agent_type": "${agent_type}",
+              "permission_mode": "${permission_mode}"
             },
             "timeout": 45
           }
@@ -92,7 +96,9 @@
               "agent_id": "${agent_id}",
               "tool_name": "${tool_name}",
               "tool_input": "${tool_input}",
-              "tool_use_id": "${tool_use_id}"
+              "tool_use_id": "${tool_use_id}",
+              "agent_type": "${agent_type}",
+              "permission_mode": "${permission_mode}"
             },
             "timeout": 20
           }
@@ -116,7 +122,10 @@
               "tool_name": "${tool_name}",
               "tool_input": "${tool_input}",
               "tool_use_id": "${tool_use_id}",
-              "tool_response": "${tool_response}"
+              "tool_response": "${tool_response}",
+              "duration_ms": "${duration_ms}",
+              "agent_type": "${agent_type}",
+              "permission_mode": "${permission_mode}"
             },
             "timeout": 20
           }
@@ -140,7 +149,11 @@
               "tool_name": "${tool_name}",
               "tool_input": "${tool_input}",
               "tool_use_id": "${tool_use_id}",
-              "error": "${error}"
+              "error": "${error}",
+              "duration_ms": "${duration_ms}",
+              "is_interrupt": "${is_interrupt}",
+              "agent_type": "${agent_type}",
+              "permission_mode": "${permission_mode}"
             },
             "timeout": 20
           }
@@ -159,7 +172,9 @@
               "session_id": "${session_id}",
               "transcript_path": "${transcript_path}",
               "cwd": "${cwd}",
-              "agent_id": "${agent_id}"
+              "agent_id": "${agent_id}",
+              "agent_type": "${agent_type}",
+              "permission_mode": "${permission_mode}"
             },
             "timeout": 20
           }
@@ -180,9 +195,182 @@
               "cwd": "${cwd}",
               "agent_id": "${agent_id}",
               "stop_hook_active": "${stop_hook_active}",
-              "last_assistant_message": "${last_assistant_message}"
+              "last_assistant_message": "${last_assistant_message}",
+              "agent_type": "${agent_type}",
+              "permission_mode": "${permission_mode}"
             },
             "timeout": 20
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:hoja:hoja",
+            "tool": "__hoja_hook",
+            "input": {
+              "event": "SubagentStart",
+              "session_id": "${session_id}",
+              "transcript_path": "${transcript_path}",
+              "cwd": "${cwd}",
+              "agent_id": "${agent_id}",
+              "agent_type": "${agent_type}",
+              "permission_mode": "${permission_mode}"
+            },
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:hoja:hoja",
+            "tool": "__hoja_hook",
+            "input": {
+              "event": "SubagentStop",
+              "session_id": "${session_id}",
+              "transcript_path": "${transcript_path}",
+              "cwd": "${cwd}",
+              "agent_id": "${agent_id}",
+              "agent_type": "${agent_type}",
+              "permission_mode": "${permission_mode}",
+              "agent_transcript_path": "${agent_transcript_path}"
+            },
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:hoja:hoja",
+            "tool": "__hoja_hook",
+            "input": {
+              "event": "PreCompact",
+              "session_id": "${session_id}",
+              "transcript_path": "${transcript_path}",
+              "cwd": "${cwd}",
+              "agent_id": "${agent_id}",
+              "agent_type": "${agent_type}",
+              "permission_mode": "${permission_mode}",
+              "trigger": "${trigger}"
+            },
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:hoja:hoja",
+            "tool": "__hoja_hook",
+            "input": {
+              "event": "PostCompact",
+              "session_id": "${session_id}",
+              "transcript_path": "${transcript_path}",
+              "cwd": "${cwd}",
+              "agent_id": "${agent_id}",
+              "agent_type": "${agent_type}",
+              "permission_mode": "${permission_mode}",
+              "trigger": "${trigger}"
+            },
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:hoja:hoja",
+            "tool": "__hoja_hook",
+            "input": {
+              "event": "Notification",
+              "session_id": "${session_id}",
+              "transcript_path": "${transcript_path}",
+              "cwd": "${cwd}",
+              "agent_id": "${agent_id}",
+              "agent_type": "${agent_type}",
+              "permission_mode": "${permission_mode}",
+              "message": "${message}",
+              "notification_type": "${notification_type}"
+            },
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:hoja:hoja",
+            "tool": "__hoja_hook",
+            "input": {
+              "event": "StopFailure",
+              "session_id": "${session_id}",
+              "transcript_path": "${transcript_path}",
+              "cwd": "${cwd}",
+              "agent_id": "${agent_id}",
+              "agent_type": "${agent_type}",
+              "permission_mode": "${permission_mode}",
+              "error": "${error}"
+            },
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:hoja:hoja",
+            "tool": "__hoja_hook",
+            "input": {
+              "event": "PermissionDenied",
+              "session_id": "${session_id}",
+              "transcript_path": "${transcript_path}",
+              "cwd": "${cwd}",
+              "agent_id": "${agent_id}",
+              "agent_type": "${agent_type}",
+              "permission_mode": "${permission_mode}",
+              "tool_name": "${tool_name}",
+              "tool_use_id": "${tool_use_id}",
+              "reason": "${reason}"
+            },
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/dist/trace-hook.mjs"
+            ],
+            "timeout": 30
           }
         ]
       }

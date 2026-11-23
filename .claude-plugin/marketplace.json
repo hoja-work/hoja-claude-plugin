@@ -6,14 +6,13 @@
     "url": "https://github.com/hoja-work"
   },
   "metadata": {
-    "description": "Hoja for Claude Code: evidence-checked TaskManage, the Trebol task gate and Hoja issue sync."
+    "description": "Hoja for Claude Code: evidence-checked tasks, the Trebol task gate, Hoja issue sync and session traces."
   },
   "plugins": [
     {
       "name": "hoja",
       "source": "./",
-      "description": "Trebol's TaskManage (acceptance questions + evidence-validated completion), its Swarm task-enforcement hooks and Hoja mode (automatic TaskManage → Hoja issue publication), plus the hosted Hoja API tools — ported 1:1 from cloverinternational/trebol.",
-      "version": "0.3.1",
+      "description": "Evidence-checked tasks and session observability for Claude Code: Trebol's TaskManage and task gate, Hoja issue sync, and session traces (turns, model calls, token usage, every tool call and gate block) attached to the Hoja issue the work belongs to.",
       "category": "productivity",
       "homepage": "https://github.com/hoja-work/hoja-claude-plugin",
       "license": "MIT"
