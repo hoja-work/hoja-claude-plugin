@@ -104,6 +104,20 @@ hoja-serve.
 Like Trebol, there is **no default endpoint**: without a CLI sign-in or a configured endpoint, Hoja calls fail closed
 with a message saying how to sign in.
 
+## Updates
+
+Claude Code updates a marketplace plugin only when told to. Two ways to stay current:
+
+- **Auto-update (recommended):** `/plugin` → *Marketplaces* → `hoja` → enable auto-update. Claude Code then refreshes
+  the marketplace and this plugin at startup; restart to load the new version.
+- **By hand:** `claude plugin marketplace update hoja && claude plugin update hoja@hoja`, then restart.
+
+At most once a day (six hours after a failed attempt) the SessionStart hook reads the version in this repository's
+`package.json` on GitHub. That is a plain request with nothing about you in it, it gives up after 1.5 s, and the answer
+is cached in the plugin's data directory. When a newer version exists, Claude Code shows one line at session start (the hook's `systemMessage`; it never enters the model's context) with the exact
+update command. Offline or rate-limited means no notice, never an error. Set `HOJA_PLUGIN_UPDATE_CHECK=off` to turn the
+check off.
+
 ## Session traces
 
 Every hook event is appended to `${CLAUDE_PLUGIN_DATA}/traces/<session>.events.jsonl` as it happens. When a trace is
