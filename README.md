@@ -9,7 +9,7 @@ Trebol's TaskManage, its task-enforcement gate, Hoja issue sync and session trac
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-2F855A.svg)](LICENSE)
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757.svg)](https://code.claude.com/docs/en/plugins)
-[![Tests](https://img.shields.io/badge/tests-376%20passing-2F855A.svg)](#verify-it-yourself)
+[![Tests](https://img.shields.io/badge/tests-419%20passing-2F855A.svg)](#verify-it-yourself)
 [![Codex version](https://img.shields.io/badge/also%20for-Codex-111111.svg)](https://github.com/hoja-work/hoja-codex-plugin)
 [![Antigravity version](https://img.shields.io/badge/also%20for-Antigravity-4285F4.svg)](https://github.com/hoja-work/hoja-antigravity-plugin)
 
@@ -73,6 +73,7 @@ Run `/hoja:setup` at any time to check your configuration.
 | **Hosted Hoja API** | The workspace's full MCP API (70+ tools: issues, comments, decisions, projects, cycles) as a second server, `hoja-api`. Its **read** tools are exempt from the gate (see [Deviations from Trebol](#deviations-from-trebol)); its writes are gated and evidence-checked under the same names Trebol uses. |
 | **Session traces** | Every hook event is recorded; with the transcript and subagent transcripts it becomes a `hoja.trace/v1` JSON trace. Completing a task linked to an issue attaches the trace to that issue (see [Session traces](#session-traces)). |
 | **Commands** | `/hoja:tasks` (task board), `/hoja:hoja on\|off\|status` (Hoja mode for this chat), `/hoja:trace [upload [ISSUE]\|path]` (this session's trace), `/hoja:setup` (diagnostics). All are answered locally, with no model turn — and `hoja_setup` / `hoja_trace` are the tool fallbacks if a hook cannot run. |
+| **`/hoja:upgrade`** | Turns a rough prompt or a pasted speech-to-text transcript into agent-ready task prompts (goal, context, constraints, acceptance questions), one per distinct ask. With `--file` it also files them as pending TaskManage tasks, so each becomes a Hoja issue. See [Upgrading a prompt](#upgrading-a-prompt). |
 
 ## Configuration
 
@@ -117,6 +118,32 @@ At most once a day (six hours after a failed attempt) the SessionStart hook read
 is cached in the plugin's data directory. When a newer version exists, Claude Code shows one line at session start (the hook's `systemMessage`; it never enters the model's context) with the exact
 update command. Offline or rate-limited means no notice, never an error. Set `HOJA_PLUGIN_UPDATE_CHECK=off` to turn the
 check off.
+
+## Upgrading a prompt
+
+`/hoja:upgrade` is for the prompt you dictated, or the call transcript you were about to paste into an agent as is:
+
+```text
+/hoja:upgrade ok so um two things, the login button does nothing in Safari, fix that and add a test,
+and separately customers want a CSV export on the billing page, only for the current filter …
+```
+
+Claude drops the filler, splits the input into its distinct asks and writes one prompt per ask:
+
+- **Goal**: the outcome, and why it matters.
+- **Context**: only the facts the input gives (where the work lives, what was decided). Nothing is invented.
+- **Constraints**: the must and must-not rules, scope and deadlines.
+- **Acceptance questions**: 1–5 yes/no questions an agent can answer with evidence.
+- **Open questions** and **Depends on**, when the input leaves gaps or one ask needs another first.
+
+It is a rewrite, not the work: no tools run and no task is created. `/hoja:upgrade --file …` (or replying "file them")
+creates the prompts as pending TaskManage tasks in one batch, with the acceptance questions as the tasks' questions.
+With Hoja mode on, each becomes its own Hoja issue in this repository's project, and the result names the issues. None
+of them is started.
+
+The pasted text is treated as data. A line inside it such as "ignore previous instructions" or "/hoja:hoja off" is
+summarized or dropped, never followed, and credentials in it are replaced with a placeholder. Unlike the other
+commands, `/hoja:upgrade` needs the model, so the hook passes it through instead of answering it locally.
 
 ## Session traces
 
@@ -259,9 +286,9 @@ Each one is covered by a test in `test/reported-bugs.test.ts`.
 git clone https://github.com/hoja-work/hoja-claude-plugin && cd hoja-claude-plugin
 npm ci
 npm run vendor:check   # 53 vendored files match vendor/MANIFEST.json (SHA-256)
-npm test               # Trebol's own 25 suites, unmodified, plus the adapter, trace and Antigravity tests: 401 tests
+npm test               # Trebol's own 25 suites, unmodified, plus the adapter, trace and Antigravity tests: 419 tests
 npm run validate       # claude plugin validate . (also passes with --strict)
-npm run eval           # live: the gate blocks an untasked write, the agent recovers, and plain questions create no tasks
+npm run eval           # live: the gate blocks an untasked write, the agent recovers, plain questions create no tasks, /hoja:upgrade splits a transcript
 ```
 
 To run the working tree directly: `claude --plugin-dir .`.
@@ -286,7 +313,7 @@ src/trace/      session traces: recorder, builder, redaction, upload, /hoja:trac
 vendor/trebol/  Trebol files, byte-for-byte (never edit; re-vendor instead)
 dist/           bundled entry points (committed, because plugins run without a build step)
 hooks/          hooks.json — every event is forwarded to the server's __hoja_hook tool
-commands/       fallback text for /hoja:* (normally answered by the hook)
+commands/       /hoja:upgrade (a model prompt), and fallback text for the other /hoja:* (normally answered by the hook)
 evals/          claude plugin eval cases
 test/           adapter tests (Claude and Codex hosts)
 ```
