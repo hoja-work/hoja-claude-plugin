@@ -11,6 +11,7 @@ Trebol's TaskManage, its task-enforcement gate, Hoja issue sync and session trac
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757.svg)](https://code.claude.com/docs/en/plugins)
 [![Tests](https://img.shields.io/badge/tests-376%20passing-2F855A.svg)](#verify-it-yourself)
 [![Codex version](https://img.shields.io/badge/also%20for-Codex-111111.svg)](https://github.com/hoja-work/hoja-codex-plugin)
+[![Antigravity version](https://img.shields.io/badge/also%20for-Antigravity-4285F4.svg)](https://github.com/hoja-work/hoja-antigravity-plugin)
 
 </div>
 
@@ -245,7 +246,7 @@ Each one is covered by a test in `test/reported-bugs.test.ts`.
 git clone https://github.com/hoja-work/hoja-claude-plugin && cd hoja-claude-plugin
 npm ci
 npm run vendor:check   # 53 vendored files match vendor/MANIFEST.json (SHA-256)
-npm test               # Trebol's own 25 suites, unmodified, plus the adapter and trace tests: 387 tests
+npm test               # Trebol's own 25 suites, unmodified, plus the adapter, trace and Antigravity tests: 401 tests
 npm run validate       # claude plugin validate . (also passes with --strict)
 npm run eval           # live: the gate blocks an untasked write, the agent recovers, and plain questions create no tasks
 ```
@@ -279,8 +280,9 @@ test/           adapter tests (Claude and Codex hosts)
 
 To re-vendor from a Trebol checkout, run `TREBOL_ROOT=~/src/trebol npm run vendor && npm run build && npm test`.
 
-The [Codex plugin](https://github.com/hoja-work/hoja-codex-plugin) has the same adapter source, selected with
-`HOJA_PLUGIN_HOST=codex`.
+The [Codex plugin](https://github.com/hoja-work/hoja-codex-plugin) and the
+[Antigravity plugin](https://github.com/hoja-work/hoja-antigravity-plugin) have the same adapter source, selected with
+`HOJA_PLUGIN_HOST=codex` or `HOJA_PLUGIN_HOST=antigravity`.
 
 ## License
 
