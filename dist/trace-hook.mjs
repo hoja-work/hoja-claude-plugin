@@ -1,7 +1,8 @@
 // Built by scripts/build.mjs from src/ and vendor/trebol/ (see vendor/MANIFEST.json). Do not edit.
 
 // src/trace-hook.ts
-import { readFileSync as readFileSync8 } from "node:fs";
+import { appendFileSync as appendFileSync3, readFileSync as readFileSync8 } from "node:fs";
+import { spawn } from "node:child_process";
 
 // src/env.ts
 import { homedir } from "node:os";
@@ -154,6 +155,7 @@ function dataDir(env = process.env, script = process.argv[1]) {
   if (installed) return join(installed[1], "plugins", "data", `${installed[3]}-${installed[2]}`);
   return join(env.CODEX_HOME?.trim() || join(homedir(), ".codex"), "plugins", "data", "hoja-standalone");
 }
+var truthy = (v) => /^(1|true|yes|on)$/i.test(v?.trim() ?? "");
 function traceUpload(env = process.env) {
   const v = (env.HOJA_PLUGIN_TRACE_UPLOAD || env.HOJA_TRACE_UPLOAD || "completion").trim().toLowerCase();
   return v === "session-end" || v === "manual" || v === "off" ? v : "completion";
@@ -7057,11 +7059,17 @@ function taskBoard(manager, width = 100) {
 }
 
 // src/trace-hook.ts
+function recordSessionEnd(input2, env = process.env) {
+  if (input2.session_id) new TraceRecorder({ dataDir: dataDir(env), detail: traceDetail(env) }).record(input2.session_id, "SessionEnd", input2);
+}
 async function sessionEnd(input2, env = process.env) {
+  recordSessionEnd(input2, env);
+  return finishSession(input2, env);
+}
+async function finishSession(input2, env = process.env) {
   const sessionId = input2.session_id;
   if (!sessionId) return [];
   const dir = dataDir(env);
-  new TraceRecorder({ dataDir: dir, detail: traceDetail(env) }).record(sessionId, "SessionEnd", input2);
   const mode = traceUpload(env);
   const { shim, traces } = createRuntime({ dataDir: dir, cwd: input2.cwd || process.cwd(), hoja: false, trace: { upload: mode, detail: traceDetail(env), env } });
   await shim.bindSession(sessionId, input2.transcript_path, input2.cwd);
@@ -7084,15 +7092,40 @@ async function sessionEnd(input2, env = process.env) {
   }
   return out;
 }
+var debug = (lines) => {
+  const log = process.env.HOJA_DEBUG_LOG?.trim();
+  if (log && lines.length) try {
+    appendFileSync3(log, lines.map((l) => `${(/* @__PURE__ */ new Date()).toISOString()} [session-end] ${l}
+`).join(""));
+  } catch {
+  }
+};
 async function main2() {
-  applyCredentials();
+  if (process.argv[2] === "--finish") {
+    applyCredentials();
+    let input3 = {};
+    try {
+      input3 = JSON.parse(process.argv[3] ?? "{}");
+    } catch {
+    }
+    debug(await finishSession(input3));
+    return;
+  }
+  applyUserConfig();
   let input2 = {};
   try {
     input2 = JSON.parse(readFileSync8(0, "utf8") || "{}");
   } catch {
   }
-  const lines = await sessionEnd(input2);
-  if (process.env.HOJA_DEBUG_LOG) process.stderr.write(lines.join("\n") + "\n");
+  const { session_id, transcript_path, cwd, reason } = input2;
+  recordSessionEnd(input2);
+  if (!session_id) return;
+  if (truthy(process.env.HOJA_TRACE_SYNC)) {
+    applyCredentials();
+    debug(await finishSession(input2));
+    return;
+  }
+  spawn(process.execPath, [process.argv[1], "--finish", JSON.stringify({ session_id, transcript_path, cwd, reason })], { detached: true, stdio: "ignore", env: process.env }).unref();
 }
 if (process.argv[1] && /trace-hook\.(m?js|ts)$/.test(process.argv[1])) main2().catch((error) => {
   process.stderr.write(`[hoja] trace: ${error?.message ?? error}
@@ -7100,5 +7133,7 @@ if (process.argv[1] && /trace-hook\.(m?js|ts)$/.test(process.argv[1])) main2().c
   process.exit(0);
 });
 export {
+  finishSession,
+  recordSessionEnd,
   sessionEnd
 };
