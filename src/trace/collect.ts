@@ -8,11 +8,12 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { statSync } from "node:fs";
 import { FIELD_CAP } from "./redact.ts";
 import { buildTrace, type SubagentTranscript } from "./build.ts";
+import { hostOf } from "../host.ts";
 import { readHookRecords, tracePath, tracesDir } from "./recorder.ts";
 import { Redactor } from "./redact.ts";
 import type { HojaTrace, TraceTask } from "./schema.ts";
 
-export const PLUGIN_VERSION = "0.4.0";
+export const PLUGIN_VERSION = "0.4.1";
 const HOJA_TASK_ENTRY = "hoja-task-link";
 const TASK_STATE_ENTRY = "pi-swarm-task-state";
 
@@ -109,7 +110,7 @@ export function collectTrace(options: CollectOptions): HojaTrace {
 	return buildTrace({
 		sessionId: options.sessionId, transcript, subagents: readSubagents(transcriptPath), hooks,
 		tasks: traceTasks(options.tasks ?? journalTasks(journal), links),
-		plugin: `hoja@${PLUGIN_VERSION}`, host: options.host, detail: options.detail,
+		plugin: `hoja@${PLUGIN_VERSION}`, host: options.host ?? (hostOf() === "codex" ? "codex" : undefined), detail: options.detail,
 		redactor: new Redactor(options.env ?? process.env), now: options.now, readPersisted: persistedReader(transcriptPath),
 	});
 }

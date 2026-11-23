@@ -8,7 +8,7 @@
  * (`duration_ms`) and the gate's decisions. A session whose transcript cannot be read (another host, a pruned file)
  * still gets a trace from hooks alone; `session.basis` says which one it is.
  */
-import { canonicalToolName } from "../transcript.ts";
+import { canonicalToolName, ROLLOUT_INJECTED } from "../transcript.ts";
 import type { HookRecord } from "./recorder.ts";
 import { clip, clipMiddle, FIELD_CAP, Redactor, toolLabel } from "./redact.ts";
 import {
@@ -63,6 +63,17 @@ function resultText(content: unknown, toolUseResult?: unknown): string {
 	if (typeof r === "string") return r;
 	if (r && typeof r === "object") return [r.stdout, r.stderr].filter((s: unknown) => typeof s === "string" && s).join("\n");
 	return "";
+}
+
+/** Codex: `exec_command`/`shell` → `Bash`; this plugin's `mcp__hoja` namespace → bare names; other MCP → `server/tool`. */
+function codexToolName(item: any): string {
+	if (item.type === "local_shell_call") return "Bash";
+	const name = String(item.name ?? "tool");
+	const ns = typeof item.namespace === "string" ? item.namespace : "";
+	if (!ns) return /^(exec_command|shell|container\.exec)$/.test(name) ? "Bash" : name === "apply_patch" ? "Edit" : name;
+	if (ns === "mcp__hoja") return name;
+	if (ns === "mcp__hoja_api" || ns === "mcp__hoja-api") return `hoja/${name}`;
+	return `${ns.replace(/^mcp__/, "")}/${name}`;
 }
 
 /** `mcp__plugin_hoja_hoja__TaskManage` → `TaskManage`; `mcp__github__get_issue` → `github/get_issue`. */
@@ -229,6 +240,122 @@ class Builder {
 		if (main) closeTurn(lastSeen);
 	}
 
+	/**
+	 * A Codex rollout (`~/.codex/sessions/…/rollout-*.jsonl`). Its shape, as Codex 0.169 writes it:
+	 *   event_msg task_started / task_complete     one turn, with duration_ms
+	 *   response_item reasoning|message|function_call   what the model produced
+	 *   token_usage_record                          closes one model request: response_id + exact usage
+	 *   response_item function_call_output          a tool result (call_id)
+	 *   session_meta / turn_context                 cwd, cli_version, model
+	 * Like the Claude transcript it is undocumented, so every field is optional and unknown lines are skipped.
+	 */
+	walkCodex(entries: Entry[], rootId: string) {
+		let turn: TraceSpan | undefined;
+		let llm: TraceSpan | undefined;
+		let model: string | undefined;
+		let lastInput: string | undefined;
+		let lastSeen: string | undefined;
+		let requests = 0;
+		const parent = () => turn?.id ?? rootId;
+		const openLlm = (ts: string | undefined) => {
+			if (llm) return llm;
+			llm = this.add({ id: `llm:codex-${++requests}`, parentId: parent(), kind: "llm", name: model ?? "model", start: lastInput ?? ts ?? lastSeen ?? new Date(0).toISOString(), status: "ok", attrs: { model } });
+			if (model) this.models.add(model);
+			return llm;
+		};
+		const closeTurn = (end?: string, durationMs?: number) => {
+			if (!turn) return;
+			turn.end = end ?? lastSeen;
+			turn.durationMs = durationMs ?? between(turn.start, turn.end);
+			if (turn.status === "running") turn.status = "ok";
+			turn = undefined;
+		};
+		for (const entry of entries) {
+			const ts: string | undefined = typeof entry.timestamp === "string" ? entry.timestamp : undefined;
+			const p = entry.payload ?? {};
+			if (entry.type === "session_meta") {
+				if (typeof p.cwd === "string") this.cwd ??= p.cwd;
+				if (typeof p.cli_version === "string") this.hostVersion ??= p.cli_version;
+				if (typeof p.git?.branch === "string") this.gitBranch = p.git.branch;
+			} else if (entry.type === "turn_context") {
+				if (typeof p.model === "string") model = p.model;
+				if (typeof p.cwd === "string") this.cwd ??= p.cwd;
+				if (typeof p.approval_policy === "string") this.permissionMode = p.approval_policy;
+			} else if (entry.type === "compacted") {
+				if (ts) this.events.push({ at: ts, kind: "compaction", message: "Context compacted", spanId: turn?.id });
+			} else if (entry.type === "event_msg" && p.type === "task_started") {
+				closeTurn(lastSeen);
+				this.turnCount++;
+				turn = this.add({ id: `turn:${this.turnCount}`, parentId: rootId, kind: "turn", status: "running", name: `Turn ${this.turnCount}`, start: ts ?? lastSeen ?? new Date(0).toISOString(), attrs: { index: this.turnCount, trigger: p.turn_attribution?.turn_trigger } });
+				lastInput = ts;
+			} else if (entry.type === "event_msg" && p.type === "task_complete") {
+				if (llm) { llm.end ??= ts; llm.durationMs ??= between(llm.start, llm.end); llm = undefined; }
+				closeTurn(ts, typeof p.duration_ms === "number" ? p.duration_ms : undefined);
+			} else if (entry.type === "event_msg" && (p.type === "turn_aborted" || p.type === "error") && ts) {
+				this.events.push({ at: ts, kind: "error", message: `Turn ${p.type === "turn_aborted" ? "aborted" : "failed"}${p.reason ? `: ${p.reason}` : p.message ? `: ${String(p.message).slice(0, 200)}` : ""}`, spanId: turn?.id });
+				if (turn) turn.status = "error";
+			} else if (entry.type === "token_usage_record") {
+				const span = openLlm(ts);
+				span.end = ts ?? span.end;
+				span.durationMs = between(span.start, span.end);
+				const u = p.usage ?? {};
+				const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : 0;
+				// OpenAI counts cached tokens inside input_tokens; Claude Code's names keep them apart.
+				span.attrs!.usage = { input_tokens: Math.max(0, n(u.input_tokens) - n(u.cached_input_tokens)), output_tokens: n(u.output_tokens), cache_read_tokens: n(u.cached_input_tokens), cache_creation_tokens: n(u.cache_write_input_tokens) };
+				if (n(u.reasoning_output_tokens)) span.attrs!.reasoningTokens = n(u.reasoning_output_tokens);
+				if (typeof p.response_id === "string") span.attrs!.request_id = p.response_id;
+				llm = undefined;
+			} else if (entry.type === "response_item") {
+				if (p.type === "message" && p.role === "user") {
+					const text = (Array.isArray(p.content) ? p.content : []).filter((c: any) => typeof c?.text === "string").map((c: any) => c.text).join("\n");
+					if (text && !ROLLOUT_INJECTED.test(text) && turn && !turn.attrs?.prompt) {
+						turn.name = this.full ? clip(firstLine(this.redactor.scrub(text)), 90, false) : turn.name;
+						if (this.full) turn.attrs = { ...turn.attrs, prompt: this.content(text) };
+						this.firstPrompt ??= text;
+					}
+					lastInput = ts;
+				} else if (p.type === "reasoning") {
+					openLlm(ts).attrs!.thinking = true;
+				} else if (p.type === "message" && p.role === "assistant") {
+					const text = (Array.isArray(p.content) ? p.content : []).filter((c: any) => typeof c?.text === "string").map((c: any) => c.text).join("\n");
+					const span = openLlm(ts);
+					if (text && this.full) span.attrs!.text = this.content(typeof span.attrs!.text === "string" ? `${span.attrs!.text}\n${text}` : text);
+				} else if ((p.type === "function_call" || p.type === "custom_tool_call" || p.type === "local_shell_call") && typeof p.call_id === "string") {
+					const span = openLlm(ts);
+					let args: any = p.arguments ?? p.input ?? p.action;
+					if (typeof args === "string") { try { args = JSON.parse(args); } catch { /* keep the string */ } }
+					const tool = codexToolName(p);
+					const labelInput = tool === "Bash" && args && typeof args === "object" ? { command: args.cmd ?? args.command } : args;
+					const toolSpan = this.add({
+						id: `tool:${p.call_id}`, parentId: parent(), kind: "tool", name: this.label(tool, labelInput),
+						start: ts ?? span.start, status: "running",
+						attrs: { tool_name: tool, tool_use_id: p.call_id, llmId: span.id, ...(this.full ? { input: this.content(typeof args === "object" ? JSON.stringify(args, null, 1) : String(args ?? "")) } : {}) },
+					});
+					this.toolSpans.set(p.call_id, toolSpan);
+					this.taskEvents(tool, args, ts, toolSpan.id);
+				} else if ((p.type === "function_call_output" || p.type === "custom_tool_call_output") && typeof p.call_id === "string") {
+					const span = this.toolSpans.get(p.call_id);
+					const text = typeof p.output === "string" ? p.output : Array.isArray(p.output) ? p.output.map((c: any) => typeof c?.text === "string" ? c.text : "").filter(Boolean).join("\n") : typeof p.output?.content === "string" ? p.output.content : "";
+					if (span) {
+						span.end = ts ?? span.end;
+						span.durationMs = between(span.start, span.end);
+						const exit = /Process exited with code (\d+)/.exec(text);
+						// Codex does not flag a rejected TaskManage call as an error; its own result says so.
+						const rejected = span.attrs?.tool_name === "TaskManage" && /"status"\s*:\s*"(failed|partial)"/.test(text);
+						span.status = /blocked by (?:PreToolUse )?hook|\[TASK ENFORCEMENT/i.test(text) ? "blocked"
+							: (exit && exit[1] !== "0") || p.output?.success === false || rejected ? "error" : "ok";
+						const out = this.content(text);
+						if (out) span.attrs = { ...span.attrs, [span.status === "ok" ? "output" : "error"]: out };
+						if (exit) span.attrs = { ...span.attrs, exitCode: Number(exit[1]) };
+					}
+					lastInput = ts;
+				}
+			}
+			if (ts) lastSeen = ts;
+		}
+		closeTurn(lastSeen);
+	}
+
 	/** TaskManage creates/updates as instants on the timeline: what the agent committed to, and when. */
 	taskEvents(tool: string, input: any, at: string | undefined, spanId: string) {
 		if (tool !== "TaskManage" || !at || !Array.isArray(input?.operations)) return;
@@ -318,8 +445,9 @@ export function buildTrace(input: BuildInput): HojaTrace {
 	const rootId = "session";
 	const root = b.add({ id: rootId, kind: "session", name: "Session", start: "", status: "ok" });
 	const entries = input.transcript ? parseLines(input.transcript) : [];
-	const basis: "transcript" | "hooks" = entries.some(e => e.type === "assistant" || e.type === "user") ? "transcript" : "hooks";
-	if (basis === "transcript") b.walk(entries, rootId);
+	const codex = entries.some(e => e.type === "session_meta" || e.type === "response_item" || e.type === "token_usage_record");
+	const basis: "transcript" | "hooks" = codex || entries.some(e => e.type === "assistant" || e.type === "user") ? "transcript" : "hooks";
+	if (basis === "transcript") { if (codex) b.walkCodex(entries, rootId); else b.walk(entries, rootId); }
 	for (const sub of input.subagents ?? []) {
 		const subEntries = parseLines(sub.text);
 		if (!subEntries.length) continue;
@@ -389,7 +517,7 @@ export function buildTrace(input: BuildInput): HojaTrace {
 		schema: TRACE_SCHEMA,
 		id: `${input.sessionId}@${root.end}`,
 		createdAt: now,
-		source: { host: input.host ?? "claude-code", hostVersion: b.hostVersion, plugin: input.plugin, detail: input.detail ?? "full" },
+		source: { host: input.host ?? (codex ? "codex" : "claude-code"), hostVersion: b.hostVersion, plugin: input.plugin, detail: input.detail ?? "full" },
 		session: {
 			id: input.sessionId, title: (input.detail ?? "full") === "full" ? title : undefined, cwd, gitBranch: b.gitBranch, permissionMode: b.permissionMode,
 			models: [...b.models], start: root.start, end: root.end, durationMs: root.durationMs ?? 0, basis,

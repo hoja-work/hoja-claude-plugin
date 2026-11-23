@@ -49,7 +49,7 @@ export function parseTranscript(text: string): PiMessage[] {
 	return /"type"\s*:\s*"(session_meta|response_item|event_msg|turn_context)"/.test(first) ? parseCodexRollout(text) : parseClaudeTranscript(text);
 }
 
-const ROLLOUT_INJECTED = /^\s*<(environment_context|user_instructions|permissions instructions|skills_instructions|turn_aborted|subagent_notification)\b/;
+export const ROLLOUT_INJECTED = /^\s*<(environment_context|user_instructions|permissions instructions|skills_instructions|turn_aborted|subagent_notification)\b/;
 const rolloutText = (content: unknown): PiPart[] => Array.isArray(content)
 	? content.flatMap((part: any) => (part?.type === "input_text" || part?.type === "output_text" || part?.type === "text") && typeof part.text === "string" && part.text ? [{ type: "text" as const, text: part.text }] : [])
 	: textParts(content);
