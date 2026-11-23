@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "hoja",
   "displayName": "Hoja",
-  "version": "0.3.1",
-  "description": "Trebol's TaskManage (acceptance questions + evidence-validated completion), its Swarm task-enforcement hooks and Hoja mode (automatic TaskManage → Hoja issue publication), plus the hosted Hoja API tools — ported 1:1 from cloverinternational/trebol.",
+  "version": "0.4.0",
+  "description": "Evidence-checked tasks and session observability for Claude Code: Trebol's TaskManage and task gate, Hoja issue sync, and session traces (turns, model calls, token usage, every tool call and gate block) attached to the Hoja issue the work belongs to.",
   "author": {
     "name": "Hoja",
     "url": "https://github.com/hoja-work"
@@ -12,10 +12,13 @@
   "license": "MIT",
   "keywords": [
     "hoja",
-    "tasks",
-    "taskmanage",
     "hooks",
+    "observability",
     "project-management",
+    "taskmanage",
+    "tasks",
+    "telemetry",
+    "tracing",
     "trebol"
   ],
   "mcpServers": {
@@ -29,7 +32,10 @@
         "HOJA_PLUGIN_API_URL": "${user_config.hoja_api_url}",
         "HOJA_PLUGIN_TOKEN": "${user_config.hoja_token}",
         "HOJA_PLUGIN_PROJECT": "${user_config.hoja_project}",
-        "HOJA_PLUGIN_ENFORCEMENT": "${user_config.task_enforcement}"
+        "HOJA_PLUGIN_ENFORCEMENT": "${user_config.task_enforcement}",
+        "HOJA_PLUGIN_MCP_URL": "${user_config.hoja_mcp_url}",
+        "HOJA_PLUGIN_TRACE_UPLOAD": "${user_config.trace_upload}",
+        "HOJA_PLUGIN_TRACE_DETAIL": "${user_config.trace_detail}"
       }
     },
     "hoja-api": {
@@ -49,7 +55,7 @@
     "hoja_api_url": {
       "type": "string",
       "title": "Hoja GraphQL URL",
-      "description": "Hoja (Linear-compatible) GraphQL endpoint, e.g. https://hoja.example.com/graphql. Leave empty to use HOJA_API_URL / LINEAR_API_URL / HOJA_MCP_URL from the environment."
+      "description": "Hoja GraphQL endpoint, e.g. https://hoja.example.com/graphql (https:// is added if you leave it out). Leave empty to use HOJA_API_URL / LINEAR_API_URL from the environment."
     },
     "hoja_mcp_url": {
       "type": "string",
@@ -77,6 +83,28 @@
         "off"
       ],
       "default": "block"
+    },
+    "trace_upload": {
+      "type": "string",
+      "title": "Session trace upload",
+      "description": "When this session's trace (turns, model calls, token usage, tool calls, gate blocks, subagents) is attached to Hoja. completion: to a task's issue when the task completes. session-end: also to every linked issue when the session ends. manual: only with /hoja:trace upload. off: never (traces are still saved locally).",
+      "options": [
+        "completion",
+        "session-end",
+        "manual",
+        "off"
+      ],
+      "default": "completion"
+    },
+    "trace_detail": {
+      "type": "string",
+      "title": "Session trace detail",
+      "description": "full: whole prompts, tool inputs and outputs and model responses, with secrets scrubbed (trimmed head-and-tail only past the upload limit). metadata: names, timings, statuses and token counts only, like Claude Code's own telemetry defaults.",
+      "options": [
+        "full",
+        "metadata"
+      ],
+      "default": "full"
     }
   },
   "homepage": "https://github.com/hoja-work/hoja-claude-plugin"

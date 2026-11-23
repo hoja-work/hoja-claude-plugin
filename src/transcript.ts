@@ -159,7 +159,7 @@ export function parseClaudeTranscript(text: string): PiMessage[] {
 
 /** Re-reads only when the file changed; transcripts grow by appends. */
 export class TranscriptReader {
-	private path?: string;
+	path?: string;
 	private cache?: { size: number; mtime: number; messages: PiMessage[] };
 	setPath(path: string | undefined) { if (path && path !== this.path) { this.path = path; this.cache = undefined; } }
 	messages(): PiMessage[] {
