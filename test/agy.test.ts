@@ -48,6 +48,17 @@ describe("agy hook shapes", () => {
 		expect(bridgeToAgy("PostInvocation", { hookSpecificOutput: { additionalContext: "ctx" } })).toEqual({ injectSteps: [{ systemMessage: { systemMessage: "ctx" } }] });
 		expect(bridgeToAgy("Stop", { decision: "continue", reason: "focus a task" })).toEqual({ decision: "continue", reason: "focus a task" });
 		expect(failOpen("PreToolUse")).toEqual({ decision: "ask" });
+		// The plugin vouches only for its own bookkeeping tools; the hosted API and everything else stay with agy.
+		const own = (tool: string, input: Record<string, unknown> = {}) => bridgeToAgy("PreToolUse", {}, { tool_name: `mcp__hoja_hoja__${tool}`, tool_input: input });
+		expect(own("TaskManage")).toEqual({ decision: "allow" });
+		expect(own("hoja_setup")).toEqual({ decision: "allow" });
+		expect(own("hoja_trace", { action: "summary" })).toEqual({ decision: "allow" });
+		expect(own("hoja_trace", { action: "upload" })).toEqual({ decision: "ask" });
+		expect(own("hoja_project", { action: "create" })).toEqual({ decision: "ask" });
+		expect(bridgeToAgy("PreToolUse", {}, { tool_name: "mcp__hoja_hoja-api__hoja_issueCreate", tool_input: {} })).toEqual({ decision: "ask" });
+		expect(bridgeToAgy("PreToolUse", {}, { tool_name: "Write", tool_input: {} })).toEqual({ decision: "ask" });
+		// A deny always wins, even for the plugin's own tools.
+		expect(bridgeToAgy("PreToolUse", { hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: "x" } }, { tool_name: "mcp__hoja_hoja__TaskManage", tool_input: {} })).toEqual({ decision: "deny", reason: "x" });
 		expect(failOpen("Stop")).toEqual({});
 	});
 });

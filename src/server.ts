@@ -54,7 +54,13 @@ const { shim, bridge } = runtime;
 let calls = 0;
 
 // Antigravity runs command hooks only; they reach this process through a socket named after our parent (agy).
-if (hostOf() === "antigravity") listen(socketPath(process.ppid), (message: Json) => bridge.handle(String(message?.event ?? ""), message?.payload ?? {}), log);
+if (hostOf() === "antigravity") listen(socketPath(process.ppid), async (message: Json) => {
+	const event = String(message?.event ?? "");
+	const out = await bridge.handle(event, message?.payload ?? {});
+	// agy has no SessionEnd: the saved trace is refreshed after every turn, once the hook has its answer.
+	if (event === "Stop") setImmediate(() => { runtime.traces.run("path").catch(error => log(`trace save failed: ${(error as Error).message}`)); });
+	return out;
+}, log);
 
 async function callTool(name: string, args: Json, signal: AbortSignal, meta?: Json): Promise<Json> {
 	// Antigravity names the conversation on every tool call; bind it even if no hook has run yet.

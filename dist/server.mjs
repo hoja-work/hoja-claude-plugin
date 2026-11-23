@@ -7368,7 +7368,14 @@ var runtime = createRuntime({
 if (debugLog) log(`start host=${hostOf()} dataDir=${dataDir()} enforcement=${enforcementMode()} headless=${headless()}`);
 var { shim, bridge } = runtime;
 var calls = 0;
-if (hostOf() === "antigravity") listen(socketPath(process.ppid), (message) => bridge.handle(String(message?.event ?? ""), message?.payload ?? {}), log);
+if (hostOf() === "antigravity") listen(socketPath(process.ppid), async (message) => {
+  const event = String(message?.event ?? "");
+  const out = await bridge.handle(event, message?.payload ?? {});
+  if (event === "Stop") setImmediate(() => {
+    runtime.traces.run("path").catch((error) => log(`trace save failed: ${error.message}`));
+  });
+  return out;
+}, log);
 async function callTool(name, args, signal, meta) {
   const conversation = meta?.["antigravity.google/conversation_id"];
   if (typeof conversation === "string" && conversation && conversation !== shim.sessionId) {

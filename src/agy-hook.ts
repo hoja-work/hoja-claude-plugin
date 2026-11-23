@@ -32,7 +32,7 @@ export async function handleAgyHook(event: string, payload: Record<string, any>,
 	try {
 		const out = await request(socket, { event: bridgeEvent, payload: bridgePayload });
 		if (out?.error) { debug(`${event}: server error ${out.error}`); return failOpen(event); }
-		return bridgeToAgy(event, out);
+		return bridgeToAgy(event, out, event === "PreToolUse" ? { tool_name: bridgePayload.tool_name, tool_input: bridgePayload.tool_input } : undefined);
 	} catch (error) {
 		debug(`${event}: ${(error as Error).message}; failing open`);
 		return failOpen(event);

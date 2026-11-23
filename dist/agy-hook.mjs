@@ -74,12 +74,21 @@ function agyToBridge(event, p) {
   }
 }
 var systemStep = (text3) => ({ systemMessage: { systemMessage: text3 } });
-function bridgeToAgy(event, out) {
+var OWN_SERVER = /^mcp__hoja_hoja__/;
+function selfApproved(toolName2, input2) {
+  if (!OWN_SERVER.test(toolName2)) return false;
+  const tool = toolName2.replace(OWN_SERVER, "");
+  if (tool === "TaskManage" || tool === "hoja_setup" || tool === "hoja_list" || tool === "hoja_get") return true;
+  if (tool === "hoja_trace") return input2?.action !== "upload";
+  if (tool === "hoja_project") return input2?.action == null || input2?.action === "list";
+  return false;
+}
+function bridgeToAgy(event, out, call) {
   const hso = out?.hookSpecificOutput ?? {};
   switch (event) {
     case "PreToolUse":
       if (hso.permissionDecision === "deny") return { decision: "deny", reason: String(hso.permissionDecisionReason ?? "Blocked by the Hoja task gate.") };
-      return { decision: "ask" };
+      return call && selfApproved(call.tool_name, call.tool_input) ? { decision: "allow" } : { decision: "ask" };
     case "PreInvocation":
       if (out?.decision === "block") return { injectSteps: [systemStep(String(out.reason ?? ""))], terminationBehavior: "terminate" };
       return hso.additionalContext ? { injectSteps: [systemStep(String(hso.additionalContext))] } : {};
@@ -7426,7 +7435,7 @@ async function handleAgyHook(event, payload, env = process.env) {
       debug(`${event}: server error ${out.error}`);
       return failOpen(event);
     }
-    return bridgeToAgy(event, out);
+    return bridgeToAgy(event, out, event === "PreToolUse" ? { tool_name: bridgePayload.tool_name, tool_input: bridgePayload.tool_input } : void 0);
   } catch (error) {
     debug(`${event}: ${error.message}; failing open`);
     return failOpen(event);
