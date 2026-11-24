@@ -1,5 +1,5 @@
 {
-  "description": "Trebol TaskManage + Swarm builtin hooks + Hoja mode + session tracing. Every event is forwarded to the plugin's MCP server (one process per session), where the vendored Trebol code decides and the trace recorder writes one line per event. SessionStart and SessionEnd are command hooks: at launch no MCP client exists yet, and at SessionEnd the server may already be gone.",
+  "description": "Trebol TaskManage + Swarm builtin hooks + Hoja mode + session tracing. Every event is forwarded to the plugin's MCP server (one process per session), where the vendored Trebol code decides and the trace recorder writes one line per event. SessionStart and SessionEnd are command hooks: at launch no MCP client exists yet, and at SessionEnd the server may already be gone. Stop also carries the decision-answer delivery (HOJA-799): the mcp_tool Stop hook holds up to 120 s for an open bound decision's answer, and a background command hook (asyncRewake) wakes an idle session when the answer arrives later.",
   "hooks": {
     "SessionStart": [
       {
@@ -199,7 +199,20 @@
               "agent_type": "${agent_type}",
               "permission_mode": "${permission_mode}"
             },
-            "timeout": 20
+            "timeout": 150
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/dist/decision-wait.mjs"
+            ],
+            "asyncRewake": true,
+            "timeout": 86400
           }
         ]
       }
