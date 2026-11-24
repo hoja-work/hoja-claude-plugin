@@ -78,6 +78,19 @@ Run `/hoja:setup` at any time to check your configuration.
 | **Commands** | `/hoja:tasks` (task board), `/hoja:hoja on\|off\|status` (Hoja mode for this chat), `/hoja:trace [upload [ISSUE]\|path]` (this session's trace), `/hoja:setup` (diagnostics). All are answered locally, with no model turn — and `hoja_setup` / `hoja_trace` are the tool fallbacks if a hook cannot run. |
 | **`/hoja:upgrade`** | Turns a rough prompt or a pasted speech-to-text transcript into agent-ready task prompts (goal, context, constraints, acceptance questions), one per distinct ask. With `--file` it also files them as pending TaskManage tasks, so each becomes a Hoja issue. See [Upgrading a prompt](#upgrading-a-prompt). |
 
+## Screenshots, recordings and other artifacts
+
+Anything a person should see goes into Hoja as an upload, never as a local path
+(`/tmp/x.png`, `/root/...`, `file://`), because a path only opens on the machine that wrote it.
+
+- `hoja_artifactUpload` takes `paths` (and optionally `issueId`, `titles`, `ttlDays`). It
+  sends each file straight to Hoja's storage (up to 512 MB, no base64), attaches it to the
+  task, and returns a shareable URL plus Markdown to paste. Use the URLs as `mediaUrl` on
+  decision options to let a person choose between many variants.
+- When an agent writes a task, comment, review request or decision that mentions an existing
+  local image, video or PDF, the plugin uploads the file first and replaces the path with its
+  link. Paths that do not exist are left alone.
+
 ## Configuration
 
 The simplest setup is to sign in once with the Hoja CLI:
